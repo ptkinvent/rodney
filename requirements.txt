@@ -1,0 +1,4 @@
+boto3
+pytest
+aws-cdk-lib
+constructs

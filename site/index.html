@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rodney</title>
+<meta name="description" content="Rodney builds web apps from a conversation with Claude and publishes each at its own address.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%233b3bd9'/%3E%3Ccircle cx='16' cy='16' r='6' fill='none' stroke='white' stroke-width='3.5'/%3E%3Ccircle cx='16' cy='16' r='10' fill='none' stroke='white' stroke-width='3' stroke-dasharray='4.2 4.2'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --bg: #f3f4f8;
+  --surface: #ffffff;
+  --fg: #161a26;
+  --muted: #5b6275;
+  --line: #d9dce6;
+  --accent: #3b3bd9;
+  --accent-fg: #ffffff;
+  --code-bg: #e9ebf5;
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --sans: "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f111a; --surface: #171a26; --fg: #e8eaf3; --muted: #9aa1b5; --line: #2a2f42;
+    --accent: #9b9dff; --accent-fg: #0f111a; --code-bg: #1d2132; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f111a; --surface: #171a26; --fg: #e8eaf3; --muted: #9aa1b5; --line: #2a2f42;
+  --accent: #9b9dff; --accent-fg: #0f111a; --code-bg: #1d2132; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 1.0625rem; line-height: 1.6; }
+.wrap { max-width: 44rem; margin-inline: auto; padding-inline: 1.25rem; padding-block: 4.5rem 4rem; }
+
+.brand { display: flex; align-items: center; gap: .6rem; font-family: var(--display); font-weight: 700; font-size: 1.15rem; letter-spacing: -.01em; }
+.brand svg { width: 1.6rem; height: 1.6rem; }
+
+h1 { font-family: var(--display); font-weight: 700; font-size: clamp(2.6rem, 9vw, 4.6rem); line-height: 1; letter-spacing: -.035em; margin: 3.25rem 0 1.25rem; text-wrap: balance; }
+h1 em { font-style: normal; color: var(--accent); }
+.lede { font-size: 1.25rem; color: var(--muted); max-width: 34rem; margin: 0 0 1rem; }
+.example { font-family: var(--mono); font-size: .9rem; color: var(--muted); margin: 0; overflow-wrap: anywhere; }
+.example b { color: var(--fg); font-weight: 500; }
+
+h2 { font-family: var(--display); font-size: 1.6rem; font-weight: 700; letter-spacing: -.02em; margin: 4rem 0 1.25rem; }
+
+ol.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 1rem; counter-reset: step; }
+ol.steps > li { counter-increment: step; display: grid; grid-template-columns: 2.25rem minmax(0, 1fr); gap: 0 1rem; padding: 1.4rem 1.4rem 1.5rem 1.1rem; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+ol.steps > li::before { content: counter(step); font-family: var(--display); font-weight: 700; font-size: 1.1rem; width: 2.25rem; height: 2.25rem; border-radius: 50%; background: var(--accent); color: var(--accent-fg); display: grid; place-items: center; }
+.step-body { min-width: 0; }
+h3 { font-family: var(--display); font-size: 1.2rem; margin: .3rem 0 .5rem; letter-spacing: -.01em; }
+.step-body p { margin: 0 0 .9rem; }
+.step-body p:last-child { margin-bottom: 0; }
+.steps ol { margin: 0 0 1rem; padding-left: 1.2rem; color: var(--fg); }
+.steps ol li { margin-bottom: .25rem; }
+
+.copy { display: flex; align-items: stretch; margin: 0 0 1rem; max-width: 100%; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--code-bg); }
+.copy code { flex: 1; min-width: 0; padding: .65rem .85rem; font-family: var(--mono); font-size: .88rem; overflow-x: auto; white-space: nowrap; user-select: all; }
+button, .btn { font: inherit; font-weight: 600; font-size: .92rem; cursor: pointer; border: 0; }
+.copy button { padding: 0 1rem; background: var(--surface); color: var(--fg); border-left: 1px solid var(--line); }
+.copy button:hover { color: var(--accent); }
+.btn { display: inline-flex; align-items: center; gap: .5rem; padding: .7rem 1.1rem; border-radius: 8px; background: var(--accent); color: var(--accent-fg); text-decoration: none; }
+.btn:hover { filter: brightness(1.08); }
+.alt { font-size: .92rem; color: var(--muted); margin-left: .5rem; }
+.alt a, .step-body a { color: var(--accent); }
+.step-body a.btn { color: var(--accent-fg); }
+
+.prompts { display: grid; gap: .6rem; margin: 0; padding: 0; list-style: none; }
+.prompts li { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: .75rem 1rem; font-size: 1rem; }
+
+details { margin-top: 1.1rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+summary { cursor: pointer; font-weight: 600; }
+details pre { background: var(--code-bg); border-radius: 8px; padding: .8rem 1rem; overflow-x: auto; font-family: var(--mono); font-size: .85rem; margin: .8rem 0 0; }
+
+.note { margin-top: 2.5rem; padding-left: 1rem; border-left: 3px solid var(--accent); color: var(--muted); font-size: .98rem; }
+.note p { margin: 0 0 .4rem; }
+footer { margin-top: 4rem; font-size: .88rem; color: var(--muted); }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 30rem) {
+  .wrap { padding-block: 3rem 3rem; }
+  ol.steps > li { grid-template-columns: minmax(0, 1fr); gap: .6rem; padding: 1.2rem; }
+}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <div class="brand">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="var(--accent)"/><circle cx="16" cy="16" r="6" fill="none" stroke="var(--accent-fg)" stroke-width="3.5"/><circle cx="16" cy="16" r="10" fill="none" stroke="var(--accent-fg)" stroke-width="3" stroke-dasharray="4.2 4.2"/></svg>
+    Rodney
+  </div>
+
+  <h1>Describe it.<br><em>Deploy it.</em></h1>
+  <p class="lede">Rodney builds web apps from a conversation with your favorite AI assistant. Ask for a dashboard, a calculator or a one-pager, and it's published at its own address in seconds. No setup, no hosting, no deploy step.</p>
+  <p class="example">ptkinvent.com/<b>your-app</b>/</p>
+
+  <h2>Set it up</h2>
+  <ol class="steps">
+    <li>
+      <div class="step-body">
+        <h3>Add the MCP server</h3>
+        <p>The connector lets Claude publish and edit your apps. Copy the address:</p>
+        <div class="copy">
+          <code id="mcp-url">https://mcp.ptkinvent.com/mcp</code>
+          <button type="button" id="copy-btn" aria-label="Copy connector address">Copy</button>
+        </div>
+        <ol>
+          <li>In Claude, open <strong>Customize → Connectors</strong>.</li>
+          <li>Click <strong>Add custom connector</strong> and paste the address.</li>
+          <li>Click <strong>Add</strong>.</li>
+        </ol>
+        <details>
+          <summary>Using Claude Code instead?</summary>
+          <pre>claude mcp add --transport http rodney https://mcp.ptkinvent.com/mcp</pre>
+        </details>
+      </div>
+    </li>
+    <li>
+      <div class="step-body">
+        <h3>Add the skill</h3>
+        <p>The skill tells Claude how Rodney works: how to name apps, which files are allowed, and how to update an app later.</p>
+        <p><a class="btn" href="/rodney.zip" download>Download rodney.zip</a><span class="alt">or <a href="/SKILL.md" download>just SKILL.md</a> (for reading, or Claude Code)</span></p>
+        <ol>
+          <li>In Claude, open <strong>Customize → Skills</strong>.</li>
+          <li>Click <strong>+ Create skill</strong>, then <strong>Upload a skill</strong>, and choose <code>rodney.zip</code>.</li>
+        </ol>
+        <details>
+          <summary>Using Claude Code instead?</summary>
+          <pre>mkdir -p ~/.claude/skills/rodney
+curl -o ~/.claude/skills/rodney/SKILL.md https://ptkinvent.com/SKILL.md</pre>
+        </details>
+      </div>
+    </li>
+    <li>
+      <div class="step-body">
+        <h3>Ask Rodney to build you something</h3>
+        <p>Start a new chat with the connector turned on, and try something like:</p>
+        <ul class="prompts">
+          <li>Rodney, build me a habit tracker I can use on my phone.</li>
+          <li>Ask Rodney to make a one-page invoice generator.</li>
+          <li>Have Rodney build a dashboard for this week's standup notes.</li>
+        </ul>
+      </div>
+    </li>
+  </ol>
+
+  <footer>
+    Apps are public to anyone with the link, so keep secrets out of them. Everything is static HTML: apps remember things in your own browser, not on a server.
+  </footer>
+</main>
+
+<script>
+(function () {
+  var btn = document.getElementById("copy-btn");
+  var code = document.getElementById("mcp-url");
+  function selectText() {
+    var r = document.createRange(); r.selectNodeContents(code);
+    var s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+  }
+  btn.addEventListener("click", function () {
+    var done = function (ok) {
+      btn.textContent = ok ? "Copied" : "Press Ctrl/⌘+C";
+      setTimeout(function () { btn.textContent = "Copy"; }, 2000);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(code.textContent).then(function () { done(true); }, function () { selectText(); done(false); });
+    } else { selectText(); done(false); }
+  });
+})();
+</script>
+</body>
+</html>

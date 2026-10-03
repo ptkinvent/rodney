@@ -1,0 +1,6 @@
+{
+  "name": "rodney",
+  "private": true,
+  "description": "Only here for the CDK command-line tool, which is a Node program. No JavaScript is written in this project.",
+  "devDependencies": { "aws-cdk": "^2" }
+}
