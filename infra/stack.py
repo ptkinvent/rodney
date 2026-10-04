@@ -32,10 +32,10 @@ class RodneyStack(Stack):
         scope: Construct,
         id: str,
         *,
-        users: str,  # JSON: author -> Google email; the only accounts that may sign in
         domain_name: str,  # e.g. "ptkinvent.com"; apps live here, the MCP server at mcp.<domain>
         hosted_zone_id: str,  # Route 53 zone for domain_name; must already exist
         google_client_id: str,  # OAuth client from Google Cloud Console (not a secret)
+        blocked_authors: str = "",  # comma-separated author handles that may not use Rodney
         base_url: str | None = None,  # public URL used in tool results
         **kwargs,
     ) -> None:
@@ -79,7 +79,7 @@ class RodneyStack(Stack):
             environment={
                 "BUCKET_NAME": bucket.bucket_name,
                 "AUTH_TABLE": auth_table.table_name,
-                "RODNEY_USERS": users,
+                "RODNEY_BLOCKED": blocked_authors,
                 "RODNEY_BASE_URL": base_url,
                 "RODNEY_ISSUER": f"https://{mcp_domain_name}",
                 "GOOGLE_CLIENT_ID": google_client_id,

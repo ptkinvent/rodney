@@ -2,6 +2,7 @@
   "app": ".venv/bin/python infra/app.py",
   "context": {
     "domainName": "ptkinvent.com",
-    "hostedZoneId": "Z0847032ZKUI7KWQXE8V"
+    "hostedZoneId": "Z0847032ZKUI7KWQXE8V",
+    "googleClientId": "663705256916-k58tp1bte4rgo46p606rtmd1524tm8lj.apps.googleusercontent.com"
   }
 }

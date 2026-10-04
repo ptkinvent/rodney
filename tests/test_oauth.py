@@ -7,6 +7,7 @@ import pytest
 
 from rodney import google
 from rodney.apps import Apps
+from rodney.auth import author_id
 from rodney.authstore import MemoryAuthStore
 from rodney.handler import Request, route
 from rodney.oauth import COOKIE, OAuthConfig, OAuthServer
@@ -16,23 +17,27 @@ from rodney.tokens import pkce_s256, sign
 ISSUER = "https://mcp.example.com"
 CLAUDE_CB = "https://claude.ai/api/mcp/auth_callback"
 VERIFIER = "v" * 64
-USERS = {"ptkinvent": "me@example.com", "friend": "friend@example.com"}
 KEY = b"s" * 32
 
 
 class Env:
     def __init__(self):
         self.now = 1_000_000.0
-        self.google_users = {"g-me": "me@example.com", "g-friend": "friend@example.com", "g-stranger": "stranger@example.com"}
+        self.google_users = {  # fake Google: sign-in code -> (email, stable account id)
+            "g-me": ("me@example.com", "sub-me"),
+            "g-friend": ("friend@example.com", "sub-friend"),
+            "g-stranger": ("stranger@example.com", "sub-stranger"),
+        }
         self.store = MemoryStore()
         self.apps = Apps(self.store, "https://example.com")
-        self.config = OAuthConfig(ISSUER, "gid", "gsecret", KEY, dict(USERS))
+        self.config = OAuthConfig(ISSUER, "gid", "gsecret", KEY)
         self.oauth = OAuthServer(self.config, MemoryAuthStore(lambda: self.now), self._google, lambda: self.now)
 
     def _google(self, client_id, secret, redirect_uri, code):
         if code == "g-boom":
             raise google.GoogleError("down")
-        return {"email": self.google_users[code]}
+        email, sub = self.google_users[code]
+        return {"email": email, "sub": sub}
 
     def req(self, method, path, query=None, headers=None, cookies=None, body=""):
         return route(self.apps, self.oauth, Request(method, path, query or {}, headers or {}, cookies or {}, body))
@@ -125,7 +130,8 @@ def test_full_flow_then_tools_work_as_the_right_author(env):
     assert init["statusCode"] == 200
     created = env.mcp(tokens["access_token"], {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
                                                "params": {"name": "create-app", "arguments": {"name": "mine", "html": "x"}}})
-    assert json.loads(json.loads(created["body"])["result"]["content"][0]["text"])["meta"]["author"] == "friend"
+    meta = json.loads(json.loads(created["body"])["result"]["content"][0]["text"])["meta"]
+    assert meta["author"] == author_id("sub-friend") and "friend@example.com" not in json.dumps(meta)
 
 
 def test_consent_page_shows_who_gets_access_and_sets_hardened_cookie(env):
@@ -175,9 +181,9 @@ def test_refresh_token_expires(env):
     assert res["statusCode"] == 400
 
 
-def test_removing_a_user_cuts_off_existing_tokens_immediately(env):
+def test_blocking_an_author_cuts_off_existing_tokens_immediately(env):
     cid, t = env.signed_in("g-friend")
-    del env.config.users["friend"]
+    env.config.blocked = frozenset({author_id("sub-friend")})
     assert env.mcp(t["access_token"], {"jsonrpc": "2.0", "id": 1, "method": "ping"})["statusCode"] == 401
     res = env.req("POST", "/token", body=up.urlencode({"grant_type": "refresh_token", "refresh_token": t["refresh_token"], "client_id": cid}))
     assert res["statusCode"] == 400
@@ -285,11 +291,23 @@ def test_unknown_signed_blobs_cannot_be_used_as_other_kinds(env):
 # ---- the browser leg: allowlist, cookie binding, Google failures -----------------------------
 
 
-def test_unlisted_google_account_is_refused_and_gets_no_code(env):
+def test_any_google_account_can_sign_in(env):
+    cid, tokens = env.signed_in("g-stranger")  # nobody needs to be on a list
+    res = env.mcp(tokens["access_token"], {"jsonrpc": "2.0", "id": 1, "method": "ping"})
+    assert res["statusCode"] == 200
+
+
+def test_different_accounts_get_different_anonymous_authors(env):
+    a, b = author_id("sub-me"), author_id("sub-friend")
+    assert a != b and a.startswith("u-") and "@" not in a
+
+
+def test_blocked_account_is_refused_and_gets_no_code(env):
+    env.config.blocked = frozenset({author_id("sub-stranger")})
     cb, _ = env.login("g-stranger")
-    assert cb["statusCode"] == 403 and "stranger@example.com" in cb["body"]
-    assert "location" not in cb["headers"]
+    assert cb["statusCode"] == 403 and "location" not in cb["headers"]
     assert env.oauth.store.items == {}  # nothing was issued
+    assert env.login("g-me")[0]["statusCode"] == 302  # everyone else is unaffected
 
 
 def test_login_must_finish_in_the_browser_that_started_it(env):

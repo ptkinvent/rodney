@@ -48,7 +48,7 @@ def test_rejects_duplicates_and_missing_index(apps):
 
 
 @pytest.mark.parametrize(
-    "bad", ["Has Caps", "-lead", "trail-", "a/b", "mcp", "admin", "", "ok\n", "x" * 41, None, 5, "_meta"]
+    "bad", ["Has Caps", "-lead", "trail-", "a/b", "mcp", "admin", "privacy", "terms", "", "ok\n", "x" * 41, None, 5, "_meta"]
 )
 def test_bad_slugs(apps, bad):
     with pytest.raises(RodneyError):
@@ -116,3 +116,35 @@ class TestOwnership:
 def test_admin_page_escapes_html(apps, store):
     apps.create_app("<script>x</script>", "esc", html="x")
     assert "<script>x" not in store.get("esc/admin/index.html")
+
+
+def test_per_author_app_cap(apps, monkeypatch):
+    import rodney.apps as module
+
+    monkeypatch.setattr(module, "MAX_APPS_PER_AUTHOR", 2)
+    apps.create_app("ptkinvent", "a1", html="x")
+    apps.create_app("ptkinvent", "a2", html="x")
+    with pytest.raises(RodneyError, match="already have 2 apps"):
+        apps.create_app("ptkinvent", "a3", html="x")
+    apps.create_app("friend", "b1", html="x")  # the cap is per author
+    apps.delete_app("ptkinvent", "a1")  # deleting frees a slot
+    apps.create_app("ptkinvent", "a3", html="x")
+
+
+def test_failed_create_does_not_use_up_the_cap(apps, store):
+    with pytest.raises(RodneyError):
+        apps.create_app("ptkinvent", "bad", files=[{"path": "nope.js", "content": ""}])
+    assert store.list("_authors/ptkinvent/") == []
+
+
+def test_reassign_moves_ownership_admin_page_and_cap_marker(apps, store):
+    apps.create_app("old-name", "todo", html="x")
+    apps.reassign("todo", "u-newowner")
+    assert apps.get_app("todo")["meta"]["author"] == "u-newowner"
+    assert "u-newowner" in store.get("todo/admin/index.html") and "old-name" not in store.get("todo/admin/index.html")
+    assert store.list("_authors/old-name/") == [] and store.list("_authors/u-newowner/") == ["_authors/u-newowner/todo"]
+    apps.write_file("u-newowner", "todo", "index.html", "v2")  # the new owner can edit
+    with pytest.raises(RodneyError, match="only they can"):
+        apps.write_file("old-name", "todo", "index.html", "no")
+    with pytest.raises(RodneyError, match="not found"):
+        apps.reassign("missing", "u-x")

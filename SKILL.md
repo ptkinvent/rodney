@@ -14,14 +14,16 @@ Rodney deploys a self-contained **static HTML app** to a live URL. You describe
 what you want; you build the HTML and call Rodney's MCP tools to deploy it. No
 local setup, build step or hosting is needed.
 
-> **Status: early.** Only a short list of approved Google accounts can use Rodney.
+> **Status: early.** Anyone with a Google account can sign in, and the service may change or be
+> shut down without notice.
 
 ## Configuration
 
 - **Site URL:** `https://ptkinvent.com`
 - **Sign-in:** the user signs in with Google when they connect Rodney. Every tool call
-  then acts as that person, who becomes the author of the apps they create. Tools take
-  no password or identity argument. If a call fails with an authorization error, ask the
+  then acts as that person, who becomes the author of the apps they create. Authors
+  appear as an anonymous handle (like `u-3f9a1c2b7e`), never an email address. Tools take
+  no password or identity argument. Each person can have up to 50 apps. If a call fails with an authorization error, ask the
   user to reconnect the Rodney connector (Customize → Connectors).
 
 An app named `team-standup` lives at:
@@ -55,7 +57,7 @@ Every tool except `list-apps` takes the app's `name`.
 - **`name`** — a slug: 1–40 chars, lowercase letters, numbers and dashes, not
   starting or ending with a dash (e.g. `budget-tracker`). Names are unique;
   reusing one returns an error, so pick another. Reserved: `mcp`, `admin`,
-  `assets`, `api`, `static`.
+  `assets`, `api`, `static`, `privacy`, `terms`.
 - **`html`** — the complete `index.html`, for single-file apps.
 - **`files`** — `[{path, content}, ...]` for multi-file apps; must include
   `index.html`. Use **either** `html` **or** `files`, never both.

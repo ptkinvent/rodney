@@ -3,7 +3,7 @@
 import re
 
 # Names that would collide with our own routes (/mcp) or generated pages (/<slug>/admin).
-RESERVED_SLUGS = {"mcp", "admin", "assets", "api", "static"}
+RESERVED_SLUGS = {"mcp", "admin", "assets", "api", "static", "privacy", "terms"}
 
 MAX_FILE_BYTES = 4 * 1024 * 1024  # Lambda's request limit is ~6MB, so stay under it.
 

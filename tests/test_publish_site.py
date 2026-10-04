@@ -15,17 +15,21 @@ def test_skill_zip_layout_matches_skill_name():
     assert names == [f"{skill_name}/SKILL.md"]
 
 
-def test_only_root_files_that_cannot_be_app_slugs():
-    from rodney.validate import validate_slug
-    from rodney.validate import RodneyError
+def test_published_keys_cannot_collide_with_apps():
+    keys = set(publish_site.objects())
+    assert {"index.html", "legal.css", "SKILL.md", "privacy/index.html", "terms/index.html"} <= keys
+    for key in keys:
+        publish_site.check_key(key)  # raises if an app could own it
 
-    for key in publish_site.objects():
-        assert "/" not in key
-        try:
-            validate_slug(key)
-        except RodneyError:
-            continue
-        raise AssertionError(f"{key} could collide with an app slug")
+
+def test_check_key_rejects_collisions():
+    import pytest
+
+    for bad in ["todo/index.html", "about", "x/y/z.html", "my-app"]:
+        with pytest.raises(SystemExit):
+            publish_site.check_key(bad)
+    for ok in ["index.html", "privacy/index.html", "terms/index.html", "SKILL.md", "rodney.zip"]:
+        publish_site.check_key(ok)
 
 
 def test_landing_page_points_at_real_endpoints():
@@ -33,3 +37,23 @@ def test_landing_page_points_at_real_endpoints():
     assert "https://mcp.ptkinvent.com/mcp" in html
     skill = (publish_site.ROOT / "SKILL.md").read_text()
     assert f'href="/{publish_site.skill_name(skill)}.zip"' in html and 'href="/SKILL.md"' in html
+
+
+def test_legal_pages_are_complete_and_match_what_rodney_does():
+    root = publish_site.ROOT / "site"
+    privacy = (root / "privacy" / "index.html").read_text()
+    terms = (root / "terms" / "index.html").read_text()
+    for page in (privacy, terms):
+        assert "mailto:ptkinvent@gmail.com" in page and 'href="/legal.css"' in page
+    # claims that must stay true of the implementation
+    assert "90 days" in privacy and "openid" in privacy and "rodney_login" in privacy
+    assert "50 pages" in terms
+    from rodney.apps import MAX_APPS_PER_AUTHOR
+    from rodney.oauth import CODE_TTL, COOKIE, REFRESH_TTL
+    assert MAX_APPS_PER_AUTHOR == 50 and COOKIE == "rodney_login"
+    assert REFRESH_TTL == 30 * 24 * 3600 and CODE_TTL == 120
+
+
+def test_landing_page_links_to_legal_pages():
+    html = (publish_site.ROOT / "site" / "index.html").read_text()
+    assert 'href="/privacy/"' in html and 'href="/terms/"' in html

@@ -7,7 +7,7 @@ The flow Claude drives (RFC 9728 discovery, RFC 7591 registration, PKCE):
     POST /register               -> Claude gets a client_id (a signed blob, nothing stored)
     GET  /authorize              -> consent page; sets a cookie binding the login to this browser
     GET  /authorize/continue     -> redirect to Google
-    GET  /callback               -> Google returns; we check the email allowlist, mint a code,
+    GET  /callback               -> Google returns; we check the block list, mint a code,
                                     and send the browser back to Claude
     POST /token                  -> Claude trades the code (+ PKCE verifier) for tokens;
                                     later trades the refresh token for new ones
@@ -19,6 +19,7 @@ single-use store (authorization codes, refresh tokens).
 import hmac
 import html
 import json
+import logging
 import re
 import secrets
 import time
@@ -27,9 +28,11 @@ from dataclasses import dataclass
 from typing import Callable
 
 from . import google
-from .auth import Users, author_for_email
+from .auth import author_id
 from .authstore import AuthStore
 from .tokens import InvalidToken, pkce_s256, sha256_hex, sign, verify
+
+log = logging.getLogger(__name__)
 
 ACCESS_TTL = 3600
 CODE_TTL = 120
@@ -51,7 +54,7 @@ class OAuthConfig:
     google_client_id: str
     google_client_secret: str
     signing_key: bytes
-    users: Users
+    blocked: frozenset = frozenset()  # author handles that may not sign in or use tokens
 
     @property
     def resource(self) -> str:
@@ -289,7 +292,8 @@ class OAuthServer:
             f"<p><strong>{html.escape(client['name'])}</strong> wants to build and edit apps for you on Rodney.</p>"
             f"<p>After you sign in it will receive access at <code>{html.escape(host)}</code>.</p>"
             f'<p><a class="go" href="/authorize/continue?{urllib.parse.urlencode({"s": state})}">Continue with Google</a></p>'
-            "<p><small>Only approved accounts can sign in.</small></p>"
+            "<p><small>Rodney only uses your Google account to tell you apart from other people. "
+            "Your email is never shown on your apps.</small></p>"
         )
         return page(200, "Connect to Rodney", body, cookies=[self._login_cookie(bind, STATE_TTL)])
 
@@ -331,15 +335,12 @@ class OAuthServer:
             )
         except google.GoogleError:
             return error_page(502, "Sign-in failed", "Google sign-in did not complete. Try again.")
-        author = author_for_email(self.cfg.users, claims["email"])
-        if author is None:
-            return page(
-                403,
-                "Not approved",
-                f"<h1>Not approved</h1><p><code>{html.escape(claims['email'])}</code> isn't on Rodney's list. "
-                "Ask the owner to add it.</p>",
-                cookies=clear,
-            )
+        author = author_id(claims["sub"])
+        if author in self.cfg.blocked:
+            log.warning("audit signin-blocked author=%s email=%s", author, claims["email"])
+            return page(403, "Blocked", "<h1>Blocked</h1><p>This account can't use Rodney.</p>", cookies=clear)
+        # The email goes to the private audit log only, so abuse can be traced to a person.
+        log.info("audit signin author=%s email=%s", author, claims["email"])
         code = secrets.token_urlsafe(32)
         self.store.put(
             "code", code, {"author": author, "cid": st["cid"], "ru": st["ru"], "cc": st["cc"], "res": st["res"]}, CODE_TTL
@@ -372,14 +373,14 @@ class OAuthServer:
             or form.get("redirect_uri") != data["ru"]
             or not _VERIFIER_RE.fullmatch(verifier)
             or not hmac.compare_digest(pkce_s256(verifier), data["cc"])
-            or data["author"] not in self.cfg.users
+            or data["author"] in self.cfg.blocked
         ):
             return oauth_error("invalid_grant", "The code is invalid, expired or already used.")
         return self._issue(data["author"], client_id, data["res"])
 
     def _refresh_grant(self, form: dict, client_id: str) -> dict:
         data = self.store.take("refresh", form.get("refresh_token", ""))  # rotated: single use
-        if data is None or data["cid"] != client_id or data["author"] not in self.cfg.users:
+        if data is None or data["cid"] != client_id or data["author"] in self.cfg.blocked:
             return oauth_error("invalid_grant", "The refresh token is invalid, expired or already used.")
         return self._issue(data["author"], client_id, data["res"])
 
@@ -408,8 +409,8 @@ class OAuthServer:
         except InvalidToken:
             raise Unauthorized("invalid_token") from None
         author = claims.get("sub")
-        # `aud` pins the token to this server; checking the allowlist here means removing
-        # someone from RODNEY_USERS cuts them off immediately, not at token expiry.
-        if claims.get("aud") != self.cfg.resource or author not in self.cfg.users:
+        # `aud` pins the token to this server; checking the block list here means blocking
+        # someone cuts them off immediately, not when their token expires.
+        if claims.get("aud") != self.cfg.resource or not author or author in self.cfg.blocked:
             raise Unauthorized("invalid_token")
         return author

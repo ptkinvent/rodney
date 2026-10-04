@@ -7,6 +7,7 @@ whole MCP host: the MCP endpoint itself plus the OAuth endpoints Claude needs to
 
 import base64
 import json
+import logging
 import os
 import urllib.parse
 from dataclasses import dataclass, field
@@ -14,13 +15,15 @@ from dataclasses import dataclass, field
 import boto3
 
 from .apps import Apps
-from .auth import parse_users
+from .auth import parse_blocked
 from .authstore import DynamoAuthStore
 from .mcp import handle_message
 from .oauth import OAuthConfig, OAuthServer, Unauthorized, json_response
 from .store import S3Store
 
 _JSON = {"content-type": "application/json"}
+
+logging.getLogger().setLevel(logging.INFO)  # so audit lines reach CloudWatch
 
 
 @dataclass
@@ -130,7 +133,7 @@ def _build() -> tuple[Apps, OAuthServer]:
         google_client_id=os.environ["GOOGLE_CLIENT_ID"],
         google_client_secret=secrets["google-client-secret"],
         signing_key=secrets["signing-key"].encode("utf-8"),
-        users=parse_users(os.environ.get("RODNEY_USERS")),
+        blocked=parse_blocked(os.environ.get("RODNEY_BLOCKED")),
     )
     apps = Apps(S3Store(os.environ["BUCKET_NAME"]), os.environ.get("RODNEY_BASE_URL", "").rstrip("/"))
     return apps, OAuthServer(config, DynamoAuthStore(os.environ["AUTH_TABLE"]))

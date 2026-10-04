@@ -1,0 +1,33 @@
+:root {
+  --bg: #f3f4f8; --surface: #ffffff; --fg: #161a26; --muted: #5b6275; --line: #d9dce6;
+  --accent: #3b3bd9; --code-bg: #e9ebf5;
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --sans: "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f111a; --surface: #171a26; --fg: #e8eaf3; --muted: #9aa1b5; --line: #2a2f42;
+    --accent: #9b9dff; --code-bg: #1d2132; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f111a; --surface: #171a26; --fg: #e8eaf3; --muted: #9aa1b5; --line: #2a2f42;
+  --accent: #9b9dff; --code-bg: #1d2132; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 1.0625rem; line-height: 1.65; }
+.wrap { max-width: 42rem; margin-inline: auto; padding-inline: 1.25rem; padding-block: 3.5rem 4rem; }
+.back { font-family: var(--display); font-weight: 700; color: var(--fg); text-decoration: none; }
+h1 { font-family: var(--display); font-size: clamp(2rem, 7vw, 2.8rem); line-height: 1.1; letter-spacing: -.03em; margin: 2.25rem 0 .4rem; }
+.updated { color: var(--muted); margin: 0 0 2rem; }
+h2 { font-family: var(--display); font-size: 1.3rem; letter-spacing: -.01em; margin: 2.25rem 0 .5rem; }
+p, ul { margin: 0 0 1rem; }
+ul { padding-left: 1.25rem; }
+li { margin-bottom: .4rem; }
+a { color: var(--accent); }
+code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .88em; background: var(--code-bg); padding: .1em .35em; border-radius: 4px; }
+.summary { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: 1.5rem; }
+.summary p { margin: 0; }
+footer { margin-top: 3rem; padding-top: 1.25rem; border-top: 1px solid var(--line); color: var(--muted); font-size: .92rem; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
