@@ -35,7 +35,7 @@ class Tool:
     description: str
     properties: dict[str, dict]  # JSON Schema for each argument
     required: list[str]
-    run: Callable[[Apps, dict], Any]  # (apps, arguments) -> JSON-serialisable result
+    run: Callable[[Apps, str, dict], Any]  # (apps, signed-in author, arguments) -> JSON-serialisable result
 
     def to_mcp(self) -> dict:
         return {
@@ -45,7 +45,6 @@ class Tool:
         }
 
 
-_PASSWORD = {"type": "string", "description": "Rodney password (identifies you as the author)."}
 _NAME = {"type": "string", "description": "App slug: lowercase letters, numbers, dashes (e.g. team-standup)."}
 _PATH = {"type": "string", "description": "File path inside the app, e.g. index.html or css/style.css."}
 
@@ -56,7 +55,6 @@ TOOLS = [
         "`files` (multi-file; must include index.html). Text files only. Returns the live URL and the "
         "admin URL (a static page showing the app's name and author) — always show both to the user.",
         {
-            "password": _PASSWORD,
             "name": _NAME,
             "description": {"type": "string"},
             "html": {"type": "string", "description": "Complete HTML for index.html."},
@@ -70,46 +68,44 @@ TOOLS = [
                 },
             },
         },
-        ["password", "name"],
-        lambda apps, a: apps.create_app(
-            a.get("password"), a.get("name"), a.get("description"), a.get("html"), a.get("files")
-        ),
+        ["name"],
+        lambda apps, who, a: apps.create_app(who, a.get("name"), a.get("description"), a.get("html"), a.get("files")),
     ),
     Tool(
         "get-app",
         "Get an app's metadata and file listing (not contents; use read-file for that).",
-        {"password": _PASSWORD, "name": _NAME},
-        ["password", "name"],
-        lambda apps, a: apps.get_app(a.get("password"), a.get("name")),
+        {"name": _NAME},
+        ["name"],
+        lambda apps, who, a: apps.get_app(a.get("name")),
     ),
     Tool(
         "read-file",
         "Read one file's content from an app. Do this before modifying a file.",
-        {"password": _PASSWORD, "name": _NAME, "path": _PATH},
-        ["password", "name", "path"],
-        lambda apps, a: apps.read_file(a.get("password"), a.get("name"), a.get("path")),
+        {"name": _NAME, "path": _PATH},
+        ["name", "path"],
+        lambda apps, who, a: apps.read_file(a.get("name"), a.get("path")),
     ),
     Tool(
         "create-or-update-file",
         "Create or overwrite one file in an existing app you authored. Other files are untouched. "
         "The `admin/` path is reserved.",
-        {"password": _PASSWORD, "name": _NAME, "path": _PATH, "content": {"type": "string"}},
-        ["password", "name", "path", "content"],
-        lambda apps, a: apps.write_file(a.get("password"), a.get("name"), a.get("path"), a.get("content")),
+        {"name": _NAME, "path": _PATH, "content": {"type": "string"}},
+        ["name", "path", "content"],
+        lambda apps, who, a: apps.write_file(who, a.get("name"), a.get("path"), a.get("content")),
     ),
     Tool(
         "delete-app",
         "Permanently delete an app you authored. Cannot be undone.",
-        {"password": _PASSWORD, "name": _NAME},
-        ["password", "name"],
-        lambda apps, a: apps.delete_app(a.get("password"), a.get("name")),
+        {"name": _NAME},
+        ["name"],
+        lambda apps, who, a: apps.delete_app(who, a.get("name")),
     ),
     Tool(
         "list-apps",
         "List all apps with their authors and URLs.",
-        {"password": _PASSWORD},
-        ["password"],
-        lambda apps, a: apps.list_apps(a.get("password")),
+        {},
+        [],
+        lambda apps, who, a: apps.list_apps(),
     ),
 ]
 _TOOLS_BY_NAME = {t.name: t for t in TOOLS}
@@ -133,15 +129,15 @@ def _text_result(text: str, is_error: bool = False) -> dict:
     return result
 
 
-def _call_tool(apps: Apps, params: dict) -> dict:
+def _call_tool(apps: Apps, author: str, params: dict) -> dict:
     tool = _TOOLS_BY_NAME.get(params.get("name"))
     if tool is None:
         raise KeyError(params.get("name"))
     args = params.get("arguments") or {}
     try:
-        result = tool.run(apps, args)
+        result = tool.run(apps, author, args)
     except RodneyError as e:
-        # A *tool* failure (bad password, name taken...). Reported inside a normal
+        # A *tool* failure (name taken, bad path...). Reported inside a normal
         # result with isError so the model can read it and react.
         return _text_result(str(e), is_error=True)
     except Exception:
@@ -151,8 +147,8 @@ def _call_tool(apps: Apps, params: dict) -> dict:
     return _text_result(text)
 
 
-def handle_message(apps: Apps, msg: Any) -> dict | None:
-    """Handles one JSON-RPC message. Returns the response, or None for notifications."""
+def handle_message(apps: Apps, msg: Any, author: str) -> dict | None:
+    """Handles one JSON-RPC message for a signed-in author. Returns the response, or None for notifications."""
     if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0":
         return _err(None, -32600, "Invalid Request")
     if "id" not in msg:
@@ -170,7 +166,7 @@ def handle_message(apps: Apps, msg: Any) -> dict | None:
         return _ok(id_, {"tools": [t.to_mcp() for t in TOOLS]})
     if method == "tools/call":
         try:
-            return _ok(id_, _call_tool(apps, params))
+            return _ok(id_, _call_tool(apps, author, params))
         except KeyError as e:
             return _err(id_, -32602, f"Unknown tool: {e.args[0]}")
     return _err(id_, -32601, f"Method not found: {method}")

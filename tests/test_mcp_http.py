@@ -4,7 +4,7 @@ import json
 import pytest
 
 from rodney.apps import Apps
-from rodney.handler import handle_http
+from rodney.handler import handle_mcp_body, to_request
 from rodney.store import MemoryStore
 
 
@@ -15,17 +15,17 @@ def store():
 
 @pytest.fixture
 def post(store):
-    apps = Apps(store, {"me": "pw"}, "https://example.com")
+    apps = Apps(store, "https://example.com")
 
-    def _post(rpc):
-        res = handle_http(apps, "POST", json.dumps(rpc) if not isinstance(rpc, str) else rpc)
+    def _post(rpc, author="me"):
+        res = handle_mcp_body(apps, author, json.dumps(rpc) if not isinstance(rpc, str) else rpc)
         return res["statusCode"], (json.loads(res["body"]) if res["body"] else None)
 
     return _post
 
 
-def call_tool(post, tool, **arguments):
-    return post({"jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": {"name": tool, "arguments": arguments}})
+def call_tool(post, tool, author="me", **arguments):
+    return post({"jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": {"name": tool, "arguments": arguments}}, author)
 
 
 def test_initialize_negotiates_version(post):
@@ -37,39 +37,32 @@ def test_initialize_negotiates_version(post):
     assert init("1999-01-01")[1]["result"]["protocolVersion"] == "2025-06-18"  # unknown -> our latest
 
 
-def test_tools_list_has_schemas(post):
+def test_tools_list_has_schemas_and_no_password(post):
     _, body = post({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     tools = {t["name"]: t for t in body["result"]["tools"]}
     assert set(tools) == {"create-app", "get-app", "read-file", "create-or-update-file", "delete-app", "list-apps"}
     for t in tools.values():
-        assert t["inputSchema"]["type"] == "object" and "password" in t["inputSchema"]["required"]
+        assert t["inputSchema"]["type"] == "object" and "password" not in t["inputSchema"]["properties"]
 
 
 def test_notifications_get_202_and_no_body(post):
-    status, body = post({"jsonrpc": "2.0", "method": "notifications/initialized"})
-    assert (status, body) == (202, None)
+    assert post({"jsonrpc": "2.0", "method": "notifications/initialized"}) == (202, None)
 
 
 def test_batch(post):
-    status, body = post(
-        [
-            {"jsonrpc": "2.0", "id": 1, "method": "ping"},
-            {"jsonrpc": "2.0", "method": "notifications/initialized"},
-            {"jsonrpc": "2.0", "id": 2, "method": "ping"},
-        ]
-    )
+    status, body = post([{"jsonrpc": "2.0", "id": 1, "method": "ping"}, {"jsonrpc": "2.0", "method": "notifications/initialized"}, {"jsonrpc": "2.0", "id": 2, "method": "ping"}])
     assert status == 200 and [r["id"] for r in body] == [1, 2]
 
 
-def test_create_app_and_tool_errors(post, store):
-    _, body = call_tool(post, "create-app", password="pw", name="http-app", html="<p>hi</p>")
+def test_author_comes_from_the_token_not_the_arguments(post, store):
+    _, body = call_tool(post, "create-app", author="friend", name="http-app", html="<p>hi</p>")
     assert "https://example.com/http-app/" in body["result"]["content"][0]["text"]
-    assert "isError" not in body["result"]
-    assert store.get("http-app/index.html") == "<p>hi</p>"
-
-    _, body = call_tool(post, "create-app", password="wrong", name="x", html="x")
-    assert body["result"]["isError"] is True
-    assert body["result"]["content"][0]["text"] == "Invalid password."
+    assert json.loads(store.get("_meta/http-app.json"))["author"] == "friend"
+    # a smuggled-in author argument changes nothing
+    call_tool(post, "create-app", author="me", name="other", html="x", author_name="friend", password="x")
+    assert json.loads(store.get("_meta/other.json"))["author"] == "me"
+    _, denied = call_tool(post, "delete-app", author="me", name="http-app")
+    assert denied["result"]["isError"] is True
 
 
 def test_missing_arguments_become_tool_errors_not_crashes(post):
@@ -85,20 +78,19 @@ def test_protocol_errors(post):
     assert post({"hello": "world"})[1]["error"]["code"] == -32600
 
 
-def test_non_post_rejected(store):
-    apps = Apps(store, {"me": "pw"}, "")
-    assert handle_http(apps, "GET", "")["statusCode"] == 405
-
-
-def test_lambda_event_shape_and_base64(monkeypatch, store):
-    import rodney.handler as h
-
-    monkeypatch.setattr(h, "_apps", Apps(store, {"me": "pw"}, "https://example.com"))
-    rpc = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "ping"})
+def test_lambda_event_parsing():
+    rpc = json.dumps({"a": 1})
     event = {
         "requestContext": {"http": {"method": "POST"}},
+        "rawPath": "/callback",
+        "rawQueryString": "code=abc&state=x%20y",
+        "headers": {"Authorization": "Bearer t", "cookie": "a=1; b=2"},
+        "cookies": ["rodney_login=zzz"],
         "body": base64.b64encode(rpc.encode()).decode(),
         "isBase64Encoded": True,
     }
-    res = h.handler(event, None)
-    assert res["statusCode"] == 200 and json.loads(res["body"])["result"] == {}
+    req = to_request(event)
+    assert (req.method, req.path, req.body) == ("POST", "/callback", rpc)
+    assert req.query == {"code": "abc", "state": "x y"}
+    assert req.headers["authorization"] == "Bearer t"
+    assert req.cookies == {"rodney_login": "zzz", "a": "1", "b": "2"}

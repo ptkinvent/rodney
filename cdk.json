@@ -1,1 +1,7 @@
-{ "app": ".venv/bin/python infra/app.py" }
+{
+  "app": ".venv/bin/python infra/app.py",
+  "context": {
+    "domainName": "ptkinvent.com",
+    "hostedZoneId": "Z0847032ZKUI7KWQXE8V"
+  }
+}

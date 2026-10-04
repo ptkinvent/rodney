@@ -1,25 +1,40 @@
-"""AWS Lambda entry point.
+"""AWS Lambda entry point and router.
 
-Lambda Function URLs hand us an HTTP request as a dict ("payload format v2") and
-expect a dict back with statusCode/headers/body.
+Lambda Function URLs hand us an HTTP request as a dict ("payload format v2") and expect a
+dict back with statusCode/headers/body (and optionally `cookies`). One function serves the
+whole MCP host: the MCP endpoint itself plus the OAuth endpoints Claude needs to sign in.
 """
 
 import base64
 import json
 import os
+import urllib.parse
+from dataclasses import dataclass, field
+
+import boto3
 
 from .apps import Apps
 from .auth import parse_users
+from .authstore import DynamoAuthStore
 from .mcp import handle_message
+from .oauth import OAuthConfig, OAuthServer, Unauthorized, json_response
 from .store import S3Store
 
 _JSON = {"content-type": "application/json"}
 
 
-def handle_http(apps: Apps, method: str, body: str) -> dict:
-    """Pure function from (HTTP method, body) to a Lambda response. Easy to test."""
-    if method != "POST":
-        return {"statusCode": 405, "headers": {"allow": "POST"}, "body": "POST only"}
+@dataclass
+class Request:
+    method: str
+    path: str
+    query: dict = field(default_factory=dict)
+    headers: dict = field(default_factory=dict)  # lower-case names
+    cookies: dict = field(default_factory=dict)
+    body: str = ""
+
+
+def handle_mcp_body(apps: Apps, author: str, body: str) -> dict:
+    """Pure function from (author, JSON-RPC body) to a Lambda response. Easy to test."""
     try:
         payload = json.loads(body or "")
     except json.JSONDecodeError:
@@ -27,28 +42,105 @@ def handle_http(apps: Apps, method: str, body: str) -> dict:
         return {"statusCode": 400, "headers": _JSON, "body": json.dumps(error)}
 
     if isinstance(payload, list):  # JSON-RPC batch (older protocol versions)
-        responses = [r for r in (handle_message(apps, m) for m in payload) if r is not None]
+        responses = [r for r in (handle_message(apps, m, author) for m in payload) if r is not None]
         out = responses or None
     else:
-        out = handle_message(apps, payload)
+        out = handle_message(apps, payload, author)
 
     if out is None:  # only notifications were sent
         return {"statusCode": 202, "headers": {}, "body": ""}
     return {"statusCode": 200, "headers": _JSON, "body": json.dumps(out)}
 
 
-_apps: Apps | None = None
+def _method_not_allowed(allow: str) -> dict:
+    return {"statusCode": 405, "headers": {"allow": allow}, "body": "Method not allowed"}
 
 
-def handler(event, context):
-    global _apps
-    if _apps is None:  # built once per Lambda container, reused across requests
-        _apps = Apps(
-            S3Store(os.environ["BUCKET_NAME"]),
-            parse_users(os.environ.get("RODNEY_USERS")),
-            os.environ.get("RODNEY_BASE_URL", "").rstrip("/"),
-        )
+def route(apps: Apps, oauth: OAuthServer, req: Request) -> dict:
+    path, method = req.path, req.method
+
+    if path in ("/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"):
+        return json_response(200, oauth.protected_resource_metadata()) if method == "GET" else _method_not_allowed("GET")
+    if path == "/.well-known/oauth-authorization-server":
+        return json_response(200, oauth.authorization_server_metadata()) if method == "GET" else _method_not_allowed("GET")
+    if path == "/register":
+        return oauth.register(req.body) if method == "POST" else _method_not_allowed("POST")
+    if path == "/authorize":
+        return oauth.authorize(req.query) if method == "GET" else _method_not_allowed("GET")
+    if path == "/authorize/continue":
+        return oauth.continue_to_google(req.query) if method == "GET" else _method_not_allowed("GET")
+    if path == "/callback":
+        return oauth.callback(req.query, req.cookies) if method == "GET" else _method_not_allowed("GET")
+    if path == "/token":
+        if method != "POST":
+            return _method_not_allowed("POST")
+        form = {k: v[0] for k, v in urllib.parse.parse_qs(req.body).items()}
+        return oauth.token(form)
+    if path == "/mcp":
+        if method != "POST":
+            return _method_not_allowed("POST")
+        try:
+            author = oauth.authenticate(req.headers.get("authorization"))
+        except Unauthorized as e:
+            return json_response(
+                401,
+                {"error": e.error or "unauthorized"},
+                {"www-authenticate": oauth.www_authenticate(e.error)},
+            )
+        return handle_mcp_body(apps, author, req.body)
+    return json_response(404, {"error": "not_found"})
+
+
+def _parse_cookies(event: dict) -> dict:
+    pairs = list(event.get("cookies") or [])
+    if event.get("headers", {}).get("cookie"):
+        pairs += event["headers"]["cookie"].split(";")
+    out = {}
+    for pair in pairs:
+        name, _, value = pair.strip().partition("=")
+        if name:
+            out[name] = value
+    return out
+
+
+def to_request(event: dict) -> Request:
     body = event.get("body") or ""
     if event.get("isBase64Encoded"):
         body = base64.b64decode(body).decode("utf-8")
-    return handle_http(_apps, event["requestContext"]["http"]["method"], body)
+    return Request(
+        method=event["requestContext"]["http"]["method"],
+        path=event["rawPath"],
+        query=dict(urllib.parse.parse_qsl(event.get("rawQueryString") or "")),
+        headers={k.lower(): v for k, v in (event.get("headers") or {}).items()},
+        cookies=_parse_cookies(event),
+        body=body,
+    )
+
+
+def _build() -> tuple[Apps, OAuthServer]:
+    prefix = os.environ.get("RODNEY_SSM_PREFIX", "/rodney")
+    found = boto3.client("ssm").get_parameters(
+        Names=[f"{prefix}/google-client-secret", f"{prefix}/signing-key"], WithDecryption=True
+    )
+    secrets = {p["Name"].rsplit("/", 1)[1]: p["Value"] for p in found["Parameters"]}
+    if len(secrets) != 2:
+        raise RuntimeError(f"Missing SSM parameters under {prefix}: have {sorted(secrets)}")
+    config = OAuthConfig(
+        issuer=os.environ["RODNEY_ISSUER"].rstrip("/"),
+        google_client_id=os.environ["GOOGLE_CLIENT_ID"],
+        google_client_secret=secrets["google-client-secret"],
+        signing_key=secrets["signing-key"].encode("utf-8"),
+        users=parse_users(os.environ.get("RODNEY_USERS")),
+    )
+    apps = Apps(S3Store(os.environ["BUCKET_NAME"]), os.environ.get("RODNEY_BASE_URL", "").rstrip("/"))
+    return apps, OAuthServer(config, DynamoAuthStore(os.environ["AUTH_TABLE"]))
+
+
+_state: tuple[Apps, OAuthServer] | None = None
+
+
+def handler(event, context):
+    global _state
+    if _state is None:  # built once per Lambda container, reused across requests
+        _state = _build()
+    return route(*_state, to_request(event))

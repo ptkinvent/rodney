@@ -2,6 +2,8 @@ from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack
 from aws_cdk import aws_certificatemanager as acm
 from aws_cdk import aws_cloudfront as cloudfront
 from aws_cdk import aws_cloudfront_origins as origins
+from aws_cdk import aws_dynamodb as dynamodb
+from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_route53 as route53
 from aws_cdk import aws_route53_targets as route53_targets
@@ -30,17 +32,17 @@ class RodneyStack(Stack):
         scope: Construct,
         id: str,
         *,
-        users: str,  # JSON: author -> password (temporary stand-in for real auth)
-        domain_name: str | None = None,  # e.g. "ptkinvent.com" (needs hosted_zone_id)
-        hosted_zone_id: str | None = None,  # Route 53 zone for domain_name; must already exist
+        users: str,  # JSON: author -> Google email; the only accounts that may sign in
+        domain_name: str,  # e.g. "ptkinvent.com"; apps live here, the MCP server at mcp.<domain>
+        hosted_zone_id: str,  # Route 53 zone for domain_name; must already exist
+        google_client_id: str,  # OAuth client from Google Cloud Console (not a secret)
         base_url: str | None = None,  # public URL used in tool results
         **kwargs,
     ) -> None:
         super().__init__(scope, id, **kwargs)
 
-        if bool(domain_name) != bool(hosted_zone_id):
-            raise ValueError("Provide both domain_name and hosted_zone_id, or neither.")
-        base_url = base_url or (f"https://{domain_name}" if domain_name else "")
+        mcp_domain_name = f"mcp.{domain_name}"
+        base_url = base_url or f"https://{domain_name}"
 
         # 1. Storage: a private bucket holding every app's files.
         bucket = s3.Bucket(
@@ -52,7 +54,19 @@ class RodneyStack(Stack):
             removal_policy=RemovalPolicy.RETAIN,  # deleting the stack must not delete your apps
         )
 
-        # 2. Compute: the Python MCP server. `src/` is zipped as-is; boto3 is already
+        # Sign-in state that must be single-use: authorization codes and refresh tokens.
+        # Rows expire on their own via the `ttl` attribute. Never put this in the apps
+        # bucket, which CloudFront serves publicly.
+        auth_table = dynamodb.Table(
+            self,
+            "Auth",
+            partition_key=dynamodb.Attribute(name="id", type=dynamodb.AttributeType.STRING),
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            time_to_live_attribute="ttl",
+            removal_policy=RemovalPolicy.DESTROY,  # only short-lived login state lives here
+        )
+
+        # 2. Compute: the Python MCP + OAuth server. `src/` is zipped as-is; boto3 is already
         #    in the Lambda runtime, so there is nothing to build or install.
         mcp = lambda_.Function(
             self,
@@ -64,31 +78,42 @@ class RodneyStack(Stack):
             memory_size=256,
             environment={
                 "BUCKET_NAME": bucket.bucket_name,
+                "AUTH_TABLE": auth_table.table_name,
                 "RODNEY_USERS": users,
                 "RODNEY_BASE_URL": base_url,
+                "RODNEY_ISSUER": f"https://{mcp_domain_name}",
+                "GOOGLE_CLIENT_ID": google_client_id,
             },
         )
         bucket.grant_read_write(mcp)  # IAM: lets this Lambda (and only it) read/write the bucket
+        auth_table.grant_read_write_data(mcp)
+        # The Google client secret and token-signing key live in SSM Parameter Store as
+        # SecureStrings (created by hand, never in this repo or in CloudFormation).
+        mcp.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["ssm:GetParameters"],
+                resources=[self.format_arn(service="ssm", resource="parameter", resource_name="rodney/*")],
+            )
+        )
         mcp_url = mcp.add_function_url(auth_type=lambda_.FunctionUrlAuthType.NONE)
 
         # The domains: one certificate covering the apps site and the MCP host, validated
         # through DNS records CDK adds to the Route 53 zone.
-        mcp_domain_name = f"mcp.{domain_name}" if domain_name else None
-        zone = certificate = None
-        if domain_name:
-            zone = route53.HostedZone.from_hosted_zone_attributes(
-                self, "Zone", hosted_zone_id=hosted_zone_id, zone_name=domain_name
-            )
-            # CloudFront only accepts certificates from us-east-1, which is where this stack lives.
-            certificate = acm.Certificate(
-                self,
-                "Cert",
-                domain_name=domain_name,
-                subject_alternative_names=[mcp_domain_name],
-                validation=acm.CertificateValidation.from_dns(zone),
-            )
+        zone = route53.HostedZone.from_hosted_zone_attributes(
+            self, "Zone", hosted_zone_id=hosted_zone_id, zone_name=domain_name
+        )
+        # CloudFront only accepts certificates from us-east-1, which is where this stack lives.
+        certificate = acm.Certificate(
+            self,
+            "Cert",
+            domain_name=domain_name,
+            subject_alternative_names=[mcp_domain_name],
+            validation=acm.CertificateValidation.from_dns(zone),
+        )
 
-        # 3. Front door: CloudFront routes /mcp to the Lambda and everything else to S3.
+        # 3. Front doors. The apps host serves S3; the MCP host serves the Lambda. They are
+        #    separate origins so untrusted app JavaScript never shares an origin with the
+        #    login endpoints.
         rewrite = cloudfront.Function(
             self,
             "Rewrite",
@@ -99,7 +124,7 @@ class RodneyStack(Stack):
         dist = cloudfront.Distribution(
             self,
             "Dist",
-            domain_names=[domain_name] if domain_name else None,
+            domain_names=[domain_name],
             certificate=certificate,
             default_behavior=cloudfront.BehaviorOptions(
                 # Origin Access Control: S3 only answers CloudFront, never the public internet.
@@ -113,43 +138,29 @@ class RodneyStack(Stack):
                     )
                 ],
             ),
-            additional_behaviors={
-                # Kept so the current connector keeps working; remove once clients use the MCP host.
-                "/mcp": cloudfront.BehaviorOptions(
-                    origin=origins.FunctionUrlOrigin(mcp_url),
-                    viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
-                    allowed_methods=cloudfront.AllowedMethods.ALLOW_ALL,
-                    cache_policy=cloudfront.CachePolicy.CACHING_DISABLED,
-                    origin_request_policy=cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
-                )
-            },
         )
 
-        if zone:
-            # A separate front door for the MCP server, so untrusted app JavaScript (served from
-            # the apps host) is never on the same origin as the MCP/login endpoints.
-            mcp_dist = cloudfront.Distribution(
-                self,
-                "McpDist",
-                domain_names=[mcp_domain_name],
-                certificate=certificate,
-                default_behavior=cloudfront.BehaviorOptions(
-                    origin=origins.FunctionUrlOrigin(mcp_url),
-                    viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
-                    allowed_methods=cloudfront.AllowedMethods.ALLOW_ALL,
-                    cache_policy=cloudfront.CachePolicy.CACHING_DISABLED,
-                    origin_request_policy=cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
-                ),
-            )
-            # Alias records: Route 53's way of pointing a domain at CloudFront.
-            for name, record_id, d in [
-                (domain_name, "Apps", dist),
-                (mcp_domain_name, "Mcp", mcp_dist),
-            ]:
-                target = route53.RecordTarget.from_alias(route53_targets.CloudFrontTarget(d))
-                route53.ARecord(self, f"{record_id}AliasA", zone=zone, record_name=name, target=target)
-                route53.AaaaRecord(self, f"{record_id}AliasAAAA", zone=zone, record_name=name, target=target)
+        mcp_dist = cloudfront.Distribution(
+            self,
+            "McpDist",
+            domain_names=[mcp_domain_name],
+            certificate=certificate,
+            default_behavior=cloudfront.BehaviorOptions(
+                origin=origins.FunctionUrlOrigin(mcp_url),
+                viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
+                allowed_methods=cloudfront.AllowedMethods.ALLOW_ALL,
+                cache_policy=cloudfront.CachePolicy.CACHING_DISABLED,
+                # Forwards Authorization, cookies and query strings to the Lambda.
+                origin_request_policy=cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+            ),
+        )
+
+        # Alias records: Route 53's way of pointing a domain at CloudFront.
+        for name, record_id, d in [(domain_name, "Apps", dist), (mcp_domain_name, "Mcp", mcp_dist)]:
+            target = route53.RecordTarget.from_alias(route53_targets.CloudFrontTarget(d))
+            route53.ARecord(self, f"{record_id}AliasA", zone=zone, record_name=name, target=target)
+            route53.AaaaRecord(self, f"{record_id}AliasAAAA", zone=zone, record_name=name, target=target)
 
         CfnOutput(self, "CloudFrontDomain", value=dist.distribution_domain_name)
-        CfnOutput(self, "McpUrl", value=f"https://{mcp_domain_name or dist.distribution_domain_name}/mcp")
+        CfnOutput(self, "McpUrl", value=f"https://{mcp_domain_name}/mcp")
         CfnOutput(self, "BucketName", value=bucket.bucket_name)

@@ -14,14 +14,15 @@ Rodney deploys a self-contained **static HTML app** to a live URL. You describe
 what you want; you build the HTML and call Rodney's MCP tools to deploy it. No
 local setup, build step or hosting is needed.
 
-> **Status: early.** Auth is a temporary shared-secret scheme and will change.
+> **Status: early.** Only a short list of approved Google accounts can use Rodney.
 
 ## Configuration
 
 - **Site URL:** `https://ptkinvent.com`
-- **Password:** Ask the user at the beginning of the chat — pass it as the `password`
-  argument on **every** tool call. The password identifies the author. Never print
-  it back in chat or put it inside an app's HTML.
+- **Sign-in:** the user signs in with Google when they connect Rodney. Every tool call
+  then acts as that person, who becomes the author of the apps they create. Tools take
+  no password or identity argument. If a call fails with an authorization error, ask the
+  user to reconnect the Rodney connector (Customize → Connectors).
 
 An app named `team-standup` lives at:
 
@@ -47,7 +48,7 @@ Rodney isn't connected, and offer to build the app as a Claude artifact instead
 | `delete-app`            | Permanently delete an app. Cannot be undone — confirm with the user first.                          |
 | `list-apps`             | List all apps with their authors and paths.                                                         |
 
-All tools take `password`. App-scoped tools also take `name`.
+Every tool except `list-apps` takes the app's `name`.
 
 ### `create-app`
 
@@ -113,8 +114,8 @@ numbers are illustrative and the app shouldn't store sensitive personal data
 ## Current limitations
 
 - **Anyone with an app's URL can view it** — there is no viewer auth. Don't put
-  secrets in an app. (The password only protects the tools that create, change
-  and delete apps.)
+  secrets in an app. (Sign-in only protects the tools that create, change and
+  delete apps.)
 - Static only; no backend or shared persistence.
 - Text files only; 4 MB per file.
 - Names are unique and are first-come-first-served.
