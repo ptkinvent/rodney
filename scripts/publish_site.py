@@ -67,9 +67,13 @@ def objects() -> dict[str, tuple[bytes, str]]:
     return out
 
 
-def bucket_name() -> str:
+def stack_output(key: str) -> str:
     outputs = boto3.client("cloudformation").describe_stacks(StackName=STACK)["Stacks"][0]["Outputs"]
-    return next(o["OutputValue"] for o in outputs if o["OutputKey"] == "BucketName")
+    return next(o["OutputValue"] for o in outputs if o["OutputKey"] == key)
+
+
+def bucket_name() -> str:
+    return stack_output("BucketName")
 
 
 def main() -> None:

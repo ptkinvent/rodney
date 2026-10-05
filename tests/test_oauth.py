@@ -11,6 +11,7 @@ from rodney.auth import author_id
 from rodney.authstore import MemoryAuthStore
 from rodney.handler import Request, route
 from rodney.oauth import COOKIE, OAuthConfig, OAuthServer
+from rodney.registry import MemoryRegistry
 from rodney.store import MemoryStore
 from rodney.tokens import pkce_s256, sign
 
@@ -29,7 +30,7 @@ class Env:
             "g-stranger": ("stranger@example.com", "sub-stranger"),
         }
         self.store = MemoryStore()
-        self.apps = Apps(self.store, "https://example.com")
+        self.apps = Apps(self.store, MemoryRegistry(), "https://example.com")
         self.config = OAuthConfig(ISSUER, "gid", "gsecret", KEY)
         self.oauth = OAuthServer(self.config, MemoryAuthStore(lambda: self.now), self._google, lambda: self.now)
 

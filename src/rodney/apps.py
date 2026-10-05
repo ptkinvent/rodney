@@ -1,10 +1,10 @@
 """All Rodney operations. Writes take the signed-in author; reads are open to any signed-in user."""
 
-import json
 import logging
 from datetime import datetime, timezone
 
 from .admin_page import render_admin_page
+from .registry import AppRegistry
 from .store import Store
 from .validate import (
     RodneyError,
@@ -16,17 +16,7 @@ from .validate import (
 
 log = logging.getLogger(__name__)
 
-JSON_TYPE = "application/json; charset=utf-8"
 MAX_APPS_PER_AUTHOR = 50  # a modest brake on abuse; raise it if real users hit it
-
-
-def _meta_key(slug: str) -> str:
-    return f"_meta/{slug}.json"
-
-
-def _index_key(author: str, slug: str) -> str:
-    """An empty marker object per app, so one cheap list call counts an author's apps."""
-    return f"_authors/{author}/{slug}"
 
 
 def _now() -> str:
@@ -34,18 +24,19 @@ def _now() -> str:
 
 
 class Apps:
-    def __init__(self, store: Store, base_url: str) -> None:
-        self.store = store
+    def __init__(self, store: Store, registry: AppRegistry, base_url: str) -> None:
+        self.store = store  # the apps' files (S3)
+        self.registry = registry  # who owns each app (DynamoDB)
         self.base_url = base_url
 
     def urls(self, slug: str) -> dict:
         return {"live": f"{self.base_url}/{slug}/", "admin": f"{self.base_url}/{slug}/admin/"}
 
     def _load_meta(self, slug: str) -> dict:
-        raw = self.store.get(_meta_key(slug))
-        if raw is None:
+        meta = self.registry.get(slug)
+        if meta is None:
             raise RodneyError(f'App "{slug}" not found.')
-        return json.loads(raw)
+        return meta
 
     def _load_owned(self, author: str, name) -> tuple[str, dict]:
         """Loads the app and checks that the caller is its author."""
@@ -75,7 +66,7 @@ class Apps:
         if len(set(paths)) != len(paths):
             raise RodneyError("Duplicate file paths.")
 
-        if len(self.store.list(f"_authors/{author}/")) >= MAX_APPS_PER_AUTHOR:
+        if self.registry.count_by_author(author) >= MAX_APPS_PER_AUTHOR:
             raise RodneyError(f"You already have {MAX_APPS_PER_AUTHOR} apps. Delete one before creating another.")
 
         # Claim the name atomically *before* writing anything else.
@@ -83,10 +74,9 @@ class Apps:
         meta = {"name": slug, "author": author, "createdAt": now, "updatedAt": now}
         if description:
             meta["description"] = description
-        if not self.store.put_if_absent(_meta_key(slug), json.dumps(meta), JSON_TYPE):
+        if not self.registry.create(meta):
             raise RodneyError(f'An app named "{slug}" already exists. Pick another name.')
 
-        self.store.put(_index_key(author, slug), "", "text/plain")
         for path, content in validated:
             self.store.put(f"{slug}/{path}", content, content_type_for(path))
         self.store.put(f"{slug}/admin/index.html", render_admin_page(slug, author), content_type_for("x.html"))
@@ -115,31 +105,26 @@ class Apps:
         path = validate_file_path(path)
         content = validate_content(content, path)
         self.store.put(f"{slug}/{path}", content, content_type_for(path))
-        meta["updatedAt"] = _now()
-        self.store.put(_meta_key(slug), json.dumps(meta), JSON_TYPE)
+        self.registry.touch(slug, _now())
         log.info("audit write-file author=%s app=%s path=%s", author, slug, path)
         return {"path": path, **self.urls(slug)}
 
     def delete_app(self, author: str, name) -> dict:
         slug, _ = self._load_owned(author, name)
         keys = self.store.list(f"{slug}/")
-        self.store.delete_many([*keys, _meta_key(slug), _index_key(author, slug)])
+        self.store.delete_many(keys)
+        self.registry.delete(slug)
         log.info("audit delete-app author=%s app=%s", author, slug)
         return {"deleted": slug, "files": len(keys)}
 
     def list_apps(self) -> list[dict]:
-        metas = [self.store.get(k) for k in self.store.list("_meta/")]
-        return [{**json.loads(m), **self.urls(json.loads(m)["name"])} for m in metas if m is not None]
+        return [{**meta, **self.urls(meta["name"])} for meta in self.registry.list_all()]
 
     def reassign(self, name, new_author: str) -> dict:
         """Operator-only (not an MCP tool): hands an app to another author."""
         slug = validate_slug(name)
         meta = self._load_meta(slug)
-        old_author = meta["author"]
-        meta["author"], meta["updatedAt"] = new_author, _now()
-        self.store.put(_meta_key(slug), json.dumps(meta), JSON_TYPE)
+        self.registry.set_author(slug, new_author, _now())
         self.store.put(f"{slug}/admin/index.html", render_admin_page(slug, new_author), content_type_for("x.html"))
-        self.store.delete_many([_index_key(old_author, slug)])
-        self.store.put(_index_key(new_author, slug), "", "text/plain")
-        log.info("audit reassign app=%s from=%s to=%s", slug, old_author, new_author)
-        return meta
+        log.info("audit reassign app=%s from=%s to=%s", slug, meta["author"], new_author)
+        return self._load_meta(slug)

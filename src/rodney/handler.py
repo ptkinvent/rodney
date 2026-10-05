@@ -19,6 +19,7 @@ from .auth import parse_blocked
 from .authstore import DynamoAuthStore
 from .mcp import handle_message
 from .oauth import OAuthConfig, OAuthServer, Unauthorized, json_response
+from .registry import DynamoRegistry
 from .store import S3Store
 
 _JSON = {"content-type": "application/json"}
@@ -135,7 +136,11 @@ def _build() -> tuple[Apps, OAuthServer]:
         signing_key=secrets["signing-key"].encode("utf-8"),
         blocked=parse_blocked(os.environ.get("RODNEY_BLOCKED")),
     )
-    apps = Apps(S3Store(os.environ["BUCKET_NAME"]), os.environ.get("RODNEY_BASE_URL", "").rstrip("/"))
+    apps = Apps(
+        S3Store(os.environ["BUCKET_NAME"]),
+        DynamoRegistry(os.environ["APPS_TABLE"]),
+        os.environ.get("RODNEY_BASE_URL", "").rstrip("/"),
+    )
     return apps, OAuthServer(config, DynamoAuthStore(os.environ["AUTH_TABLE"]))
 
 

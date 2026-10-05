@@ -13,10 +13,13 @@ from constructs import Construct
 # Runs at CloudFront's edge on every viewer request, before S3 is asked for anything.
 #   /slug   -> 301 to /slug/   (so relative links like css/style.css resolve correctly)
 #   /slug/  -> fetch /slug/index.html from S3
+#   /_...   -> 404, always. Names starting with an underscore are reserved for internals and
+#              can never be app names, so nothing public should ever live there.
 REWRITE_FUNCTION = """
 function handler(event) {
   var r = event.request;
   var u = r.uri;
+  if (u.charAt(1) === '_') { return { statusCode: 404, statusDescription: 'Not Found' }; }
   if (u.endsWith('/')) { r.uri = u + 'index.html'; return r; }
   var last = u.substring(u.lastIndexOf('/') + 1);
   if (last.indexOf('.') === -1) {
@@ -54,6 +57,25 @@ class RodneyStack(Stack):
             removal_policy=RemovalPolicy.RETAIN,  # deleting the stack must not delete your apps
         )
 
+        # The registry of apps: who owns what. Durable (kept if the stack is deleted, with
+        # point-in-time recovery), and reachable only by the Lambda, unlike the public bucket.
+        apps_table = dynamodb.Table(
+            self,
+            "AppRegistry",
+            partition_key=dynamodb.Attribute(name="slug", type=dynamodb.AttributeType.STRING),
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            point_in_time_recovery_specification=dynamodb.PointInTimeRecoverySpecification(
+                point_in_time_recovery_enabled=True
+            ),
+            removal_policy=RemovalPolicy.RETAIN,
+        )
+        apps_table.add_global_secondary_index(
+            index_name="by-author",
+            partition_key=dynamodb.Attribute(name="author", type=dynamodb.AttributeType.STRING),
+            sort_key=dynamodb.Attribute(name="slug", type=dynamodb.AttributeType.STRING),
+            projection_type=dynamodb.ProjectionType.ALL,
+        )
+
         # Sign-in state that must be single-use: authorization codes and refresh tokens.
         # Rows expire on their own via the `ttl` attribute. Never put this in the apps
         # bucket, which CloudFront serves publicly.
@@ -79,6 +101,7 @@ class RodneyStack(Stack):
             environment={
                 "BUCKET_NAME": bucket.bucket_name,
                 "AUTH_TABLE": auth_table.table_name,
+                "APPS_TABLE": apps_table.table_name,
                 "RODNEY_BLOCKED": blocked_authors,
                 "RODNEY_BASE_URL": base_url,
                 "RODNEY_ISSUER": f"https://{mcp_domain_name}",
@@ -87,6 +110,7 @@ class RodneyStack(Stack):
         )
         bucket.grant_read_write(mcp)  # IAM: lets this Lambda (and only it) read/write the bucket
         auth_table.grant_read_write_data(mcp)
+        apps_table.grant_read_write_data(mcp)  # includes the by-author index
         # The Google client secret and token-signing key live in SSM Parameter Store as
         # SecureStrings (created by hand, never in this repo or in CloudFormation).
         mcp.add_to_role_policy(
@@ -164,3 +188,4 @@ class RodneyStack(Stack):
         CfnOutput(self, "CloudFrontDomain", value=dist.distribution_domain_name)
         CfnOutput(self, "McpUrl", value=f"https://{mcp_domain_name}/mcp")
         CfnOutput(self, "BucketName", value=bucket.bucket_name)
+        CfnOutput(self, "AppsTableName", value=apps_table.table_name)

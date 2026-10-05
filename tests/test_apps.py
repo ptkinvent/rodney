@@ -1,6 +1,7 @@
 import pytest
 
 from rodney.apps import Apps
+from rodney.registry import MemoryRegistry
 from rodney.store import MemoryStore
 from rodney.validate import RodneyError
 
@@ -11,8 +12,13 @@ def store():
 
 
 @pytest.fixture
-def apps(store):
-    return Apps(store, "https://example.com")
+def registry():
+    return MemoryRegistry()
+
+
+@pytest.fixture
+def apps(store, registry):
+    return Apps(store, registry, "https://example.com")
 
 
 def test_create_deploys_html_admin_page_and_metadata(apps, store):
@@ -58,10 +64,10 @@ def test_bad_slugs(apps, bad):
 @pytest.mark.parametrize(
     "path", ["admin/index.html", "admin", "../other/index.html", "/abs", "a//b", ".env", "a/./b", "ok.html\n", "sp ace.html"]
 )
-def test_cannot_write_reserved_or_escaping_paths(apps, store, path):
+def test_cannot_write_reserved_or_escaping_paths(apps, registry, path):
     with pytest.raises(RodneyError):
         apps.create_app("ptkinvent", "evil", files=[{"path": "index.html", "content": ""}, {"path": path, "content": ""}])
-    assert store.get("_meta/evil.json") is None  # a failed create must not claim the name
+    assert registry.get("evil") is None  # a failed create must not claim the name
 
 
 def test_malformed_files_argument(apps):
@@ -95,9 +101,9 @@ class TestOwnership:
         with pytest.raises(RodneyError, match="reserved"):
             apps.write_file("ptkinvent", "mine", "admin/index.html", "x")
 
-    def test_delete_removes_everything(self, apps, store):
+    def test_delete_removes_everything(self, apps, store, registry):
         assert apps.delete_app("ptkinvent", "mine")["files"] == 2  # index.html + admin page
-        assert store.objects == {}
+        assert store.objects == {} and registry.get("mine") is None
         with pytest.raises(RodneyError, match="not found"):
             apps.get_app("mine")
 
@@ -131,18 +137,18 @@ def test_per_author_app_cap(apps, monkeypatch):
     apps.create_app("ptkinvent", "a3", html="x")
 
 
-def test_failed_create_does_not_use_up_the_cap(apps, store):
+def test_failed_create_does_not_use_up_the_cap(apps, registry):
     with pytest.raises(RodneyError):
         apps.create_app("ptkinvent", "bad", files=[{"path": "nope.js", "content": ""}])
-    assert store.list("_authors/ptkinvent/") == []
+    assert registry.count_by_author("ptkinvent") == 0
 
 
-def test_reassign_moves_ownership_admin_page_and_cap_marker(apps, store):
+def test_reassign_moves_ownership_admin_page_and_cap_count(apps, store, registry):
     apps.create_app("old-name", "todo", html="x")
     apps.reassign("todo", "u-newowner")
     assert apps.get_app("todo")["meta"]["author"] == "u-newowner"
     assert "u-newowner" in store.get("todo/admin/index.html") and "old-name" not in store.get("todo/admin/index.html")
-    assert store.list("_authors/old-name/") == [] and store.list("_authors/u-newowner/") == ["_authors/u-newowner/todo"]
+    assert registry.count_by_author("old-name") == 0 and registry.count_by_author("u-newowner") == 1
     apps.write_file("u-newowner", "todo", "index.html", "v2")  # the new owner can edit
     with pytest.raises(RodneyError, match="only they can"):
         apps.write_file("old-name", "todo", "index.html", "no")

@@ -5,6 +5,7 @@ import pytest
 
 from rodney.apps import Apps
 from rodney.handler import handle_mcp_body, to_request
+from rodney.registry import MemoryRegistry
 from rodney.store import MemoryStore
 
 
@@ -14,8 +15,13 @@ def store():
 
 
 @pytest.fixture
-def post(store):
-    apps = Apps(store, "https://example.com")
+def registry():
+    return MemoryRegistry()
+
+
+@pytest.fixture
+def post(store, registry):
+    apps = Apps(store, registry, "https://example.com")
 
     def _post(rpc, author="me"):
         res = handle_mcp_body(apps, author, json.dumps(rpc) if not isinstance(rpc, str) else rpc)
@@ -54,13 +60,13 @@ def test_batch(post):
     assert status == 200 and [r["id"] for r in body] == [1, 2]
 
 
-def test_author_comes_from_the_token_not_the_arguments(post, store):
+def test_author_comes_from_the_token_not_the_arguments(post, registry):
     _, body = call_tool(post, "create-app", author="friend", name="http-app", html="<p>hi</p>")
     assert "https://example.com/http-app/" in body["result"]["content"][0]["text"]
-    assert json.loads(store.get("_meta/http-app.json"))["author"] == "friend"
+    assert registry.get("http-app")["author"] == "friend"
     # a smuggled-in author argument changes nothing
     call_tool(post, "create-app", author="me", name="other", html="x", author_name="friend", password="x")
-    assert json.loads(store.get("_meta/other.json"))["author"] == "me"
+    assert registry.get("other")["author"] == "me"
     _, denied = call_tool(post, "delete-app", author="me", name="http-app")
     assert denied["result"]["isError"] is True
 

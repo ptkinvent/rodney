@@ -10,11 +10,20 @@ Static-HTML micro-apps at `<base>/<slug>/`, deployed by Claude through an MCP se
     src/rodney/authstore.py    single-use codes and refresh tokens (DynamoDB)
     src/rodney/google.py       Google sign-in
     src/rodney/apps.py         create / get / read / write / delete / list
+    src/rodney/registry.py     the app registry (DynamoDB): which apps exist and who owns them
     src/rodney/admin_page.py   the static /<slug>/admin/ page
     src/rodney/mcp.py          MCP protocol (JSON-RPC) + tool definitions
     src/rodney/handler.py      AWS Lambda entry point and router
     infra/                   AWS CDK (Python): bucket, Lambda, CloudFront, Route 53, certificate
     site/, scripts/          landing page, and the script that publishes it plus the skill zip
+
+## Where data lives
+
+- **App files** are in the S3 bucket, served publicly by CloudFront (`<slug>/...`). Public by design.
+- **App records** (owner, timestamps, description) are in the `AppRegistry` DynamoDB table, which only
+  the Lambda can read. Never put records that must stay private in the bucket: every key in it is a URL.
+- **Sign-in state** (one-time codes, refresh tokens) is in the `Auth` table, with a TTL.
+- Paths starting with `_` are never served (`REWRITE_FUNCTION` in `infra/stack.py`) and can never be app names.
 
 ## Sign-in
 
