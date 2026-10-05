@@ -45,6 +45,7 @@ class RodneyStack(Stack):
         super().__init__(scope, id, **kwargs)
 
         mcp_domain_name = f"mcp.{domain_name}"
+        app_domain_name = f"app.{domain_name}"  # the website: sign in and see your apps
         base_url = base_url or f"https://{domain_name}"
 
         # 1. Storage: a private bucket holding every app's files.
@@ -105,6 +106,7 @@ class RodneyStack(Stack):
                 "RODNEY_BLOCKED": blocked_authors,
                 "RODNEY_BASE_URL": base_url,
                 "RODNEY_ISSUER": f"https://{mcp_domain_name}",
+                "RODNEY_APP_URL": f"https://{app_domain_name}",
                 "GOOGLE_CLIENT_ID": google_client_id,
             },
         )
@@ -135,9 +137,14 @@ class RodneyStack(Stack):
             validation=acm.CertificateValidation.from_dns(zone),
         )
 
-        # 3. Front doors. The apps host serves S3; the MCP host serves the Lambda. They are
-        #    separate origins so untrusted app JavaScript never shares an origin with the
-        #    login endpoints.
+        # The website gets its own certificate, so adding it never touches the others.
+        app_certificate = acm.Certificate(
+            self, "AppCert", domain_name=app_domain_name, validation=acm.CertificateValidation.from_dns(zone)
+        )
+
+        # 3. Front doors. The apps host serves S3; the MCP host and the website serve the Lambda.
+        #    All three are separate origins, so untrusted app JavaScript never shares an origin
+        #    with the login endpoints or with a signed-in session.
         rewrite = cloudfront.Function(
             self,
             "Rewrite",
@@ -170,7 +177,9 @@ class RodneyStack(Stack):
             domain_names=[mcp_domain_name],
             certificate=certificate,
             default_behavior=cloudfront.BehaviorOptions(
-                origin=origins.FunctionUrlOrigin(mcp_url),
+                # The surface header tells the Lambda which host a request arrived on. CloudFront
+                # sets it, so a viewer can't choose it.
+                origin=origins.FunctionUrlOrigin(mcp_url, custom_headers={"x-rodney-surface": "mcp"}),
                 viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
                 allowed_methods=cloudfront.AllowedMethods.ALLOW_ALL,
                 cache_policy=cloudfront.CachePolicy.CACHING_DISABLED,
@@ -179,13 +188,32 @@ class RodneyStack(Stack):
             ),
         )
 
+        app_dist = cloudfront.Distribution(
+            self,
+            "AppDist",
+            domain_names=[app_domain_name],
+            certificate=app_certificate,
+            default_behavior=cloudfront.BehaviorOptions(
+                origin=origins.FunctionUrlOrigin(mcp_url, custom_headers={"x-rodney-surface": "app"}),
+                viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                allowed_methods=cloudfront.AllowedMethods.ALLOW_ALL,
+                cache_policy=cloudfront.CachePolicy.CACHING_DISABLED,
+                origin_request_policy=cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+            ),
+        )
+
         # Alias records: Route 53's way of pointing a domain at CloudFront.
-        for name, record_id, d in [(domain_name, "Apps", dist), (mcp_domain_name, "Mcp", mcp_dist)]:
+        for name, record_id, d in [
+            (domain_name, "Apps", dist),
+            (mcp_domain_name, "Mcp", mcp_dist),
+            (app_domain_name, "Website", app_dist),
+        ]:
             target = route53.RecordTarget.from_alias(route53_targets.CloudFrontTarget(d))
             route53.ARecord(self, f"{record_id}AliasA", zone=zone, record_name=name, target=target)
             route53.AaaaRecord(self, f"{record_id}AliasAAAA", zone=zone, record_name=name, target=target)
 
         CfnOutput(self, "CloudFrontDomain", value=dist.distribution_domain_name)
         CfnOutput(self, "McpUrl", value=f"https://{mcp_domain_name}/mcp")
+        CfnOutput(self, "WebsiteUrl", value=f"https://{app_domain_name}/")
         CfnOutput(self, "BucketName", value=bucket.bucket_name)
         CfnOutput(self, "AppsTableName", value=apps_table.table_name)

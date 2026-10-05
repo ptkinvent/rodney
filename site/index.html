@@ -39,8 +39,11 @@ html { -webkit-text-size-adjust: 100%; }
 body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 1.0625rem; line-height: 1.6; }
 .wrap { max-width: 44rem; margin-inline: auto; padding-inline: 1.25rem; padding-block: 4.5rem 4rem; }
 
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .brand { display: flex; align-items: center; gap: .6rem; font-family: var(--display); font-weight: 700; font-size: 1.15rem; letter-spacing: -.01em; }
 .brand svg { width: 1.6rem; height: 1.6rem; }
+.signin { font-weight: 600; font-size: .92rem; text-decoration: none; color: var(--fg); border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: .45rem .9rem; }
+.signin:hover { border-color: var(--accent); color: var(--accent); }
 
 h1 { font-family: var(--display); font-weight: 700; font-size: clamp(2.6rem, 9vw, 4.6rem); line-height: 1; letter-spacing: -.035em; margin: 3.25rem 0 1.25rem; text-wrap: balance; }
 h1 em { font-style: normal; color: var(--accent); }
@@ -91,9 +94,12 @@ footer { margin-top: 4rem; font-size: .88rem; color: var(--muted); }
 </head>
 <body>
 <main class="wrap">
+  <div class="topbar">
   <div class="brand">
     <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="var(--accent)"/><circle cx="16" cy="16" r="6" fill="none" stroke="var(--accent-fg)" stroke-width="3.5"/><circle cx="16" cy="16" r="10" fill="none" stroke="var(--accent-fg)" stroke-width="3" stroke-dasharray="4.2 4.2"/></svg>
     Rodney
+  </div>
+  <a class="signin" href="https://app.ptkinvent.com/login">Sign in</a>
   </div>
 
   <h1>Describe it.<br><em>Deploy it.</em></h1>
@@ -115,7 +121,7 @@ footer { margin-top: 4rem; font-size: .88rem; color: var(--muted); }
           <li>Click <strong>Add custom connector</strong> and paste the address.</li>
           <li>Click <strong>Add</strong>, then sign in with Google when Claude asks.</li>
         </ol>
-        <p>Any Google account works. Rodney keeps an anonymous ID for you, never your email, and your apps show that ID as their author.</p>
+        <p>Any Google account works. Your apps show an anonymous ID as their author, never your email.</p>
         <details>
           <summary>Using Claude Code instead?</summary>
           <pre>claude mcp add --transport http rodney https://mcp.ptkinvent.com/mcp</pre>

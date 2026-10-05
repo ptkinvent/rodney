@@ -12,7 +12,7 @@
 <main class="wrap">
   <a class="back" href="/">← Rodney</a>
   <h1>Privacy policy</h1>
-  <p class="updated">Last updated October 4, 2026</p>
+  <p class="updated">Last updated October 11, 2026</p>
 
   <div class="summary"><p>Rodney is a small personal project run by one person. It uses your Google account only to tell you apart from other users. It never reads your Gmail, contacts or files, and it doesn't sell or share your information.</p></div>
 
@@ -27,13 +27,19 @@
     <li><strong>An anonymous handle.</strong> Rodney turns your account ID into a short handle such as <code>u-3f9a1c2b7e</code> using a one-way hash. The handle is stored with each page you create and is shown as that page's author. It contains neither your email nor your name.</li>
     <li><strong>Your email address, in a private log.</strong> When you sign in, Rodney writes your email and handle to an operational log that only the person running Rodney can read. It's used to investigate abuse and fix problems, and it's deleted automatically after 90 days. It is never stored with your pages or shown publicly.</li>
     <li><strong>A record of what you do.</strong> Creating, updating and deleting pages is logged with your handle, for the same 90 days.</li>
+    <li><strong>Website sessions.</strong> If you sign in on the website to see your pages, a signed cookie in your browser identifies your handle and email. Nothing about the session is stored on the server.</li>
     <li><strong>Sign-in tokens.</strong> Short-lived sign-in codes (about two minutes) and refresh tokens (up to 30 days) are kept in a database as one-way hashes, so they can only be used once. Access tokens aren't stored and expire after an hour.</li>
     <li><strong>The pages you publish.</strong> Their files, a name, a description if you give one, and timestamps. See "Public by design" below.</li>
   </ul>
   <p>Rodney does not write IP addresses to its own logs. The cloud infrastructure that delivers requests may process them as part of normal operation.</p>
 
   <h2>Cookies</h2>
-  <p>During sign-in Rodney sets one temporary cookie, <code>rodney_login</code>, that expires after 10 minutes. It ties the sign-in to the browser that started it, which blocks a kind of account-linking attack. Rodney sets no analytics, advertising or tracking cookies. Pages that other people publish through Rodney are their authors' own code, and Rodney doesn't control what those pages do.</p>
+  <p>Rodney sets only the cookies it needs to sign you in, and no analytics, advertising or tracking cookies:</p>
+  <ul>
+    <li><code>rodney_login</code> and <code>rodney_web_login</code> are temporary and expire after 10 minutes. They tie a sign-in to the browser that started it, which blocks a kind of account-linking attack.</li>
+    <li><code>rodney_session</code> is set if you sign in on the website (app.ptkinvent.com). It lasts 14 days or until you sign out. It holds your anonymous handle and your email address, so the website can show you which account you're signed in with. It is sent only to app.ptkinvent.com, not to the pages people publish.</li>
+  </ul>
+  <p> Pages that other people publish through Rodney are their authors' own code, and Rodney doesn't control what those pages do.</p>
 
   <h2>Public by design</h2>
   <p>Anything you publish is available to anyone who has the link. Don't put passwords, personal data or anything private in a page.</p>

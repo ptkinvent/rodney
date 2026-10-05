@@ -21,6 +21,7 @@ from .mcp import handle_message
 from .oauth import OAuthConfig, OAuthServer, Unauthorized, json_response
 from .registry import DynamoRegistry
 from .store import S3Store
+from .web import WebApp
 
 _JSON = {"content-type": "application/json"}
 
@@ -35,6 +36,7 @@ class Request:
     headers: dict = field(default_factory=dict)  # lower-case names
     cookies: dict = field(default_factory=dict)
     body: str = ""
+    surface: str = "mcp"  # which host this arrived on: "mcp" (Claude) or "app" (the website)
 
 
 def handle_mcp_body(apps: Apps, author: str, body: str) -> dict:
@@ -60,7 +62,24 @@ def _method_not_allowed(allow: str) -> dict:
     return {"statusCode": 405, "headers": {"allow": allow}, "body": "Method not allowed"}
 
 
-def route(apps: Apps, oauth: OAuthServer, req: Request) -> dict:
+def route_app(web: WebApp, req: Request) -> dict:
+    """The website (app.<domain>): My apps, and browser sign-in."""
+    path, method = req.path, req.method
+    if path == "/":
+        return web.home(req.cookies) if method == "GET" else _method_not_allowed("GET")
+    if path == "/login":
+        return web.login(req.cookies) if method == "GET" else _method_not_allowed("GET")
+    if path == "/login/callback":
+        return web.login_callback(req.query, req.cookies) if method == "GET" else _method_not_allowed("GET")
+    if path == "/logout":
+        return web.logout() if method == "POST" else _method_not_allowed("POST")
+    return json_response(404, {"error": "not_found"})
+
+
+def route(apps: Apps, oauth: OAuthServer, req: Request, web: WebApp | None = None) -> dict:
+    """Each host answers only its own routes: the website never serves OAuth, and vice versa."""
+    if req.surface == "app":
+        return route_app(web, req) if web else json_response(404, {"error": "not_found"})
     path, method = req.path, req.method
 
     if path in ("/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"):
@@ -118,10 +137,12 @@ def to_request(event: dict) -> Request:
         headers={k.lower(): v for k, v in (event.get("headers") or {}).items()},
         cookies=_parse_cookies(event),
         body=body,
+        # Set by CloudFront on each distribution's origin request, so viewers can't choose it.
+        surface="app" if (event.get("headers") or {}).get("x-rodney-surface") == "app" else "mcp",
     )
 
 
-def _build() -> tuple[Apps, OAuthServer]:
+def _build() -> tuple[Apps, OAuthServer, WebApp]:
     prefix = os.environ.get("RODNEY_SSM_PREFIX", "/rodney")
     found = boto3.client("ssm").get_parameters(
         Names=[f"{prefix}/google-client-secret", f"{prefix}/signing-key"], WithDecryption=True
@@ -141,14 +162,19 @@ def _build() -> tuple[Apps, OAuthServer]:
         DynamoRegistry(os.environ["APPS_TABLE"]),
         os.environ.get("RODNEY_BASE_URL", "").rstrip("/"),
     )
-    return apps, OAuthServer(config, DynamoAuthStore(os.environ["AUTH_TABLE"]))
+    return (
+        apps,
+        OAuthServer(config, DynamoAuthStore(os.environ["AUTH_TABLE"])),
+        WebApp(config, os.environ["RODNEY_APP_URL"], apps),
+    )
 
 
-_state: tuple[Apps, OAuthServer] | None = None
+_state: tuple[Apps, OAuthServer, WebApp] | None = None
 
 
 def handler(event, context):
     global _state
     if _state is None:  # built once per Lambda container, reused across requests
         _state = _build()
-    return route(*_state, to_request(event))
+    apps, oauth, web = _state
+    return route(apps, oauth, to_request(event), web)

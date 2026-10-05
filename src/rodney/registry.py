@@ -25,6 +25,7 @@ class AppRegistry(Protocol):
     def set_author(self, slug: str, author: str, updated_at: str) -> None: ...
     def delete(self, slug: str) -> None: ...
     def list_all(self) -> list[dict]: ...
+    def list_by_author(self, author: str) -> list[dict]: ...
     def count_by_author(self, author: str) -> int: ...
 
 
@@ -55,6 +56,9 @@ class MemoryRegistry:
 
     def list_all(self):
         return [dict(m) for m in sorted(self.apps.values(), key=lambda m: m["name"])]
+
+    def list_by_author(self, author):
+        return [m for m in self.list_all() if m["author"] == author]
 
     def count_by_author(self, author):
         return sum(1 for m in self.apps.values() if m["author"] == author)
@@ -132,19 +136,27 @@ class DynamoRegistry:
                 return sorted(items, key=lambda m: m["name"])
             kwargs["ExclusiveStartKey"] = res["LastEvaluatedKey"]
 
-    def count_by_author(self, author):
-        total = 0
+    def _query_author(self, author: str, **extra) -> list[dict]:
+        """Pages through the by-author index; yields one result page at a time."""
         kwargs: dict = {
             "TableName": self.table,
             "IndexName": AUTHOR_INDEX,
             "KeyConditionExpression": "#a = :a",
             "ExpressionAttributeNames": {"#a": "author"},
             "ExpressionAttributeValues": {":a": {"S": author}},
-            "Select": "COUNT",
+            **extra,
         }
+        pages = []
         while True:
             res = self.ddb.query(**kwargs)
-            total += res["Count"]
+            pages.append(res)
             if "LastEvaluatedKey" not in res:
-                return total
+                return pages
             kwargs["ExclusiveStartKey"] = res["LastEvaluatedKey"]
+
+    def list_by_author(self, author):
+        items = [i for page in self._query_author(author) for i in page.get("Items", [])]
+        return sorted((self._from_item(i) for i in items), key=lambda m: m["name"])
+
+    def count_by_author(self, author):
+        return sum(page["Count"] for page in self._query_author(author, Select="COUNT"))

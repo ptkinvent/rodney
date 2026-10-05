@@ -117,6 +117,9 @@ class Apps:
         log.info("audit delete-app author=%s app=%s", author, slug)
         return {"deleted": slug, "files": len(keys)}
 
+    def list_apps_by(self, author: str) -> list[dict]:
+        return [{**meta, **self.urls(meta["name"])} for meta in self.registry.list_by_author(author)]
+
     def list_apps(self) -> list[dict]:
         return [{**meta, **self.urls(meta["name"])} for meta in self.registry.list_all()]
 

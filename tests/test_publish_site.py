@@ -47,11 +47,20 @@ def test_legal_pages_are_complete_and_match_what_rodney_does():
         assert "mailto:ptkinvent@gmail.com" in page and 'href="/legal.css"' in page
     # claims that must stay true of the implementation
     assert "90 days" in privacy and "openid" in privacy and "rodney_login" in privacy
+    from rodney.web import LOGIN_COOKIE, LOGIN_TTL, SESSION_COOKIE, SESSION_TTL
+    assert SESSION_COOKIE in privacy and LOGIN_COOKIE in privacy and "14 days" in privacy
+    assert SESSION_TTL == 14 * 24 * 3600 and LOGIN_TTL == 600
+    assert "handle and your email address" in privacy and "never your email" not in privacy.split("Cookies")[1]
     assert "50 pages" in terms
     from rodney.apps import MAX_APPS_PER_AUTHOR
     from rodney.oauth import CODE_TTL, COOKIE, REFRESH_TTL
     assert MAX_APPS_PER_AUTHOR == 50 and COOKIE == "rodney_login"
     assert REFRESH_TTL == 30 * 24 * 3600 and CODE_TTL == 120
+
+
+def test_landing_page_has_a_sign_in_button_to_the_website():
+    html = (publish_site.ROOT / "site" / "index.html").read_text()
+    assert 'class="signin" href="https://app.ptkinvent.com/login"' in html
 
 
 def test_landing_page_links_to_legal_pages():

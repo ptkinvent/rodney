@@ -50,12 +50,15 @@ class FakeDynamo:
         page, last = self._page(list(self.items.values()), ExclusiveStartKey)
         return {"Items": page, **({"LastEvaluatedKey": last} if last else {})}
 
-    def query(self, TableName, IndexName, KeyConditionExpression, ExpressionAttributeNames, ExpressionAttributeValues, Select, ExclusiveStartKey=None):
-        assert IndexName == "by-author" and KeyConditionExpression == "#a = :a" and Select == "COUNT"
+    def query(self, TableName, IndexName, KeyConditionExpression, ExpressionAttributeNames, ExpressionAttributeValues, Select=None, ExclusiveStartKey=None):
+        assert IndexName == "by-author" and KeyConditionExpression == "#a = :a" and Select in (None, "COUNT")
         author = ExpressionAttributeValues[":a"]["S"]
         mine = [i for i in self.items.values() if i["author"]["S"] == author]
         page, last = self._page(mine, ExclusiveStartKey)
-        return {"Count": len(page), **({"LastEvaluatedKey": last} if last else {})}
+        res = {"Count": len(page), **({"LastEvaluatedKey": last} if last else {})}
+        if Select != "COUNT":  # like the real index, a full query returns the items
+            res["Items"] = page
+        return res
 
 
 @pytest.fixture(params=["memory", "dynamo"])
@@ -121,3 +124,13 @@ def test_returned_records_are_copies(reg):
     reg.get("todo")["author"] = "tampered"
     reg.list_all()[0]["author"] = "tampered"
     assert reg.get("todo")["author"] == "u-a"
+
+
+def test_list_by_author_returns_only_that_authors_apps_across_pages(reg):
+    for i in range(5):
+        reg.create(meta(f"mine-{i}", author="u-me", description=f"app {i}"))
+    reg.create(meta("theirs", author="u-them"))
+    mine = reg.list_by_author("u-me")
+    assert [m["name"] for m in mine] == [f"mine-{i}" for i in range(5)]
+    assert mine[2]["description"] == "app 2" and all(m["author"] == "u-me" for m in mine)
+    assert reg.list_by_author("u-nobody") == []
