@@ -52,10 +52,30 @@ def test_legal_pages_are_complete_and_match_what_rodney_does():
     assert SESSION_TTL == 14 * 24 * 3600 and LOGIN_TTL == 600
     assert "handle and your email address" in privacy and "never your email" not in privacy.split("Cookies")[1]
     assert "50 pages" in terms
+    from rodney.apps import PUBLIC_DATA_NOTICE
+    from rodney.datastore import MAX_COLLECTIONS, MAX_RECORDS
+
+    assert "Data stored by apps" in privacy and "anyone with an app's link can read and change it" in privacy
+    assert f"{MAX_COLLECTIONS} collections of up to {MAX_RECORDS:,} records" in privacy and "35 days" in privacy
+    assert "Anyone who has the app's link can read and change that data" in terms
+    assert PUBLIC_DATA_NOTICE.startswith("Anyone who has the link to this app can read and change its data")
     from rodney.apps import MAX_APPS_PER_AUTHOR
     from rodney.oauth import CODE_TTL, COOKIE, REFRESH_TTL
     assert MAX_APPS_PER_AUTHOR == 50 and COOKIE == "rodney_login"
     assert REFRESH_TTL == 30 * 24 * 3600 and CODE_TTL == 120
+
+
+def test_the_skill_matches_the_real_tools_and_limits():
+    from rodney import datastore as ds
+    from rodney.mcp import TOOLS
+
+    skill = (publish_site.ROOT / "SKILL.md").read_text()
+    for tool in TOOLS:
+        assert f"`{tool.name}`" in skill, f"the skill never mentions the {tool.name} tool"
+    assert "list-apps" not in skill
+    assert f"{ds.MAX_RECORDS:,} records and {ds.MAX_COLLECTION_BYTES // 1024 // 1024} MB per collection" in skill
+    assert f"{ds.MAX_RECORD_BYTES // 1024} KB per record, {ds.MAX_COLLECTIONS} collections per" in skill
+    assert "/api/full-stack/<app>/data/<collection>" in skill and "record.data" in skill and "increment" in skill
 
 
 def test_landing_page_has_a_sign_in_button_to_the_website():

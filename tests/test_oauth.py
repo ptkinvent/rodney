@@ -8,6 +8,7 @@ import pytest
 from rodney import google
 from rodney.apps import Apps
 from rodney.auth import author_id
+from rodney.datastore import MemoryDataStore
 from rodney.authstore import MemoryAuthStore
 from rodney.handler import Request, route
 from rodney.oauth import COOKIE, OAuthConfig, OAuthServer
@@ -30,7 +31,7 @@ class Env:
             "g-stranger": ("stranger@example.com", "sub-stranger"),
         }
         self.store = MemoryStore()
-        self.apps = Apps(self.store, MemoryRegistry(), "https://example.com")
+        self.apps = Apps(self.store, MemoryRegistry(), MemoryDataStore(), "https://example.com")
         self.config = OAuthConfig(ISSUER, "gid", "gsecret", KEY)
         self.oauth = OAuthServer(self.config, MemoryAuthStore(lambda: self.now), self._google, lambda: self.now)
 

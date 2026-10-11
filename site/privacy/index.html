@@ -29,6 +29,7 @@
     <li><strong>A record of what you do.</strong> Creating, updating and deleting pages is logged with your handle, for the same 90 days.</li>
     <li><strong>Website sessions.</strong> If you sign in on the website to see your pages, a signed cookie in your browser identifies your handle and email. Nothing about the session is stored on the server.</li>
     <li><strong>Sign-in tokens.</strong> Short-lived sign-in codes (about two minutes) and refresh tokens (up to 30 days) are kept in a database as one-way hashes, so they can only be used once. Access tokens aren't stored and expire after an hour.</li>
+    <li><strong>Data stored by apps.</strong> Some apps are given a backend that saves what their visitors enter, such as a shared to-do list. Rodney doesn't know who entered that data, and <strong>anyone with an app's link can read and change it</strong>. It is kept until the app's owner erases it or deletes the app, and then goes into backups that expire after 35 days. An app is limited to 10 collections of up to 1,000 records each. The person who runs Rodney can read all of it.</li>
     <li><strong>The pages you publish.</strong> Their files, a name, a description if you give one, and timestamps. See "Public by design" below.</li>
   </ul>
   <p>Rodney does not write IP addresses to its own logs. The cloud infrastructure that delivers requests may process them as part of normal operation.</p>
@@ -42,7 +43,7 @@
   <p> Pages that other people publish through Rodney are their authors' own code, and Rodney doesn't control what those pages do.</p>
 
   <h2>Public by design</h2>
-  <p>Anything you publish is available to anyone who has the link. Don't put passwords, personal data or anything private in a page.</p>
+  <p>Anything you publish is available to anyone who has the link, and so is any data an app stores. Don't put passwords, personal data or anything private in a page or in its data.</p>
 
   <h2>Who else is involved</h2>
   <ul>
@@ -53,7 +54,7 @@
   <p>Rodney does not sell your information, use it for advertising, or share it with anyone else, except where the law requires it.</p>
 
   <h2>Keeping and deleting your information</h2>
-  <p>You can delete any of your pages at any time by asking your assistant to delete it, which removes the page's files. Logs delete themselves after 90 days. To have your information removed sooner, or to ask what Rodney holds about you, email the address below.</p>
+  <p>You can delete any of your pages at any time by asking your assistant to delete it, which removes the page's files and any data it stored, or erase just the stored data. Visitors who entered data into someone else's app should ask that app's owner to erase it. Logs delete themselves after 90 days. To have your information removed sooner, or to ask what Rodney holds about you, email the address below.</p>
 
   <h2>Children</h2>
   <p>Rodney isn't meant for children under 13, or under the minimum age for a Google account where you live.</p>

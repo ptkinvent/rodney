@@ -25,6 +25,15 @@ Static-HTML micro-apps at `<base>/<slug>/`, deployed by Claude through an MCP se
 - **Sign-in state** (one-time codes, refresh tokens) is in the `Auth` table, with a TTL.
 - Paths starting with `_` are never served (`REWRITE_FUNCTION` in `infra/stack.py`) and can never be app names.
 
+## Full-stack apps (the data API)
+
+An app made with `fullStack: true` can store data. Its page calls `/api/full-stack/<app>/data/<collection>`
+(same origin; the contract matches the original Spin's). `src/rodney/dataapi.py` is the HTTP layer and
+`src/rodney/datastore.py` holds the records in the `AppData` table (record and quota counters change together
+in one transaction; `data` is a native map so `increment` is a true atomic update). **Data is public to anyone
+with the app's link** by design. Limits are constants in `datastore.py`. Owner tools: `update-app-settings`,
+`read-app-data`, `clear-app-data`. Deleting an app deletes its data; turning the backend off keeps it.
+
 ## Sign-in
 
 Claude signs users in through OAuth, with Google as the identity provider. Rodney is the OAuth

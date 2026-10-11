@@ -77,6 +77,21 @@ class RodneyStack(Stack):
             projection_type=dynamodb.ProjectionType.ALL,
         )
 
+        # Data written by full-stack apps: one table shared by all apps, kept apart by key (see
+        # datastore.py). This is other people's data, so it is kept if the stack is deleted, and
+        # point-in-time recovery lets us rewind accidental or malicious changes.
+        data_table = dynamodb.Table(
+            self,
+            "AppData",
+            partition_key=dynamodb.Attribute(name="pk", type=dynamodb.AttributeType.STRING),
+            sort_key=dynamodb.Attribute(name="sk", type=dynamodb.AttributeType.STRING),
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            point_in_time_recovery_specification=dynamodb.PointInTimeRecoverySpecification(
+                point_in_time_recovery_enabled=True
+            ),
+            removal_policy=RemovalPolicy.RETAIN,
+        )
+
         # Sign-in state that must be single-use: authorization codes and refresh tokens.
         # Rows expire on their own via the `ttl` attribute. Never put this in the apps
         # bucket, which CloudFront serves publicly.
@@ -103,6 +118,7 @@ class RodneyStack(Stack):
                 "BUCKET_NAME": bucket.bucket_name,
                 "AUTH_TABLE": auth_table.table_name,
                 "APPS_TABLE": apps_table.table_name,
+                "DATA_TABLE": data_table.table_name,
                 "RODNEY_BLOCKED": blocked_authors,
                 "RODNEY_BASE_URL": base_url,
                 "RODNEY_ISSUER": f"https://{mcp_domain_name}",
@@ -113,6 +129,7 @@ class RodneyStack(Stack):
         bucket.grant_read_write(mcp)  # IAM: lets this Lambda (and only it) read/write the bucket
         auth_table.grant_read_write_data(mcp)
         apps_table.grant_read_write_data(mcp)  # includes the by-author index
+        data_table.grant_read_write_data(mcp)  # transactions are covered by the item permissions
         # The Google client secret and token-signing key live in SSM Parameter Store as
         # SecureStrings (created by hand, never in this repo or in CloudFormation).
         mcp.add_to_role_policy(
@@ -157,6 +174,18 @@ class RodneyStack(Stack):
             "Dist",
             domain_names=[domain_name],
             certificate=certificate,
+            additional_behaviors={
+                # The data API for full-stack apps. Same origin as the apps, so their pages can call it
+                # with a plain relative fetch() and no CORS.
+                "/api/*": cloudfront.BehaviorOptions(
+                    origin=origins.FunctionUrlOrigin(mcp_url, custom_headers={"x-rodney-surface": "data"}),
+                    viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
+                    allowed_methods=cloudfront.AllowedMethods.ALLOW_ALL,
+                    cache_policy=cloudfront.CachePolicy.CACHING_DISABLED,
+                    # Forwards the browser's Sec-Fetch-Site label, which the API uses to refuse other websites.
+                    origin_request_policy=cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+                )
+            },
             default_behavior=cloudfront.BehaviorOptions(
                 # Origin Access Control: S3 only answers CloudFront, never the public internet.
                 origin=origins.S3BucketOrigin.with_origin_access_control(bucket),
@@ -217,3 +246,4 @@ class RodneyStack(Stack):
         CfnOutput(self, "WebsiteUrl", value=f"https://{app_domain_name}/")
         CfnOutput(self, "BucketName", value=bucket.bucket_name)
         CfnOutput(self, "AppsTableName", value=apps_table.table_name)
+        CfnOutput(self, "DataTableName", value=data_table.table_name)

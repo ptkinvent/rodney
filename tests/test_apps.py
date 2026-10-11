@@ -1,6 +1,7 @@
 import pytest
 
 from rodney.apps import Apps
+from rodney.datastore import MemoryDataStore
 from rodney.registry import MemoryRegistry
 from rodney.store import MemoryStore
 from rodney.validate import RodneyError
@@ -18,7 +19,7 @@ def registry():
 
 @pytest.fixture
 def apps(store, registry):
-    return Apps(store, registry, "https://example.com")
+    return Apps(store, registry, MemoryDataStore(), "https://example.com")
 
 
 def test_create_deploys_html_admin_page_and_metadata(apps, store):
@@ -107,12 +108,12 @@ class TestOwnership:
         with pytest.raises(RodneyError, match="not found"):
             apps.get_app("mine")
 
-    def test_list_shows_all_authors(self, apps):
+    def test_listing_shows_only_your_own_apps(self, apps):
         apps.create_app("friend", "theirs", html="x")
-        assert sorted((a["name"], a["author"]) for a in apps.list_apps()) == [
-            ("mine", "ptkinvent"),
-            ("theirs", "friend"),
-        ]
+        assert [(a["name"], a["author"]) for a in apps.list_apps_by("ptkinvent")] == [("mine", "ptkinvent")]
+        assert [a["name"] for a in apps.list_apps_by("friend")] == ["theirs"]
+        assert apps.list_apps_by("nobody") == []
+        assert not hasattr(apps, "list_apps")  # nothing lets a user enumerate everyone's apps
 
     def test_read_missing_file(self, apps):
         with pytest.raises(RodneyError, match="No file"):

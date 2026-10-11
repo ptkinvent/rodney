@@ -4,6 +4,7 @@ import json
 import pytest
 
 from rodney.apps import Apps
+from rodney.datastore import MemoryDataStore
 from rodney.handler import handle_mcp_body, to_request
 from rodney.registry import MemoryRegistry
 from rodney.store import MemoryStore
@@ -21,7 +22,7 @@ def registry():
 
 @pytest.fixture
 def post(store, registry):
-    apps = Apps(store, registry, "https://example.com")
+    apps = Apps(store, registry, MemoryDataStore(), "https://example.com")
 
     def _post(rpc, author="me"):
         res = handle_mcp_body(apps, author, json.dumps(rpc) if not isinstance(rpc, str) else rpc)
@@ -46,7 +47,8 @@ def test_initialize_negotiates_version(post):
 def test_tools_list_has_schemas_and_no_password(post):
     _, body = post({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     tools = {t["name"]: t for t in body["result"]["tools"]}
-    assert set(tools) == {"create-app", "get-app", "read-file", "create-or-update-file", "delete-app", "list-apps"}
+    assert set(tools) == {"create-app", "get-app", "read-file", "create-or-update-file", "delete-app", "list-my-apps",
+                          "update-app-settings", "read-app-data", "clear-app-data"}
     for t in tools.values():
         assert t["inputSchema"]["type"] == "object" and "password" not in t["inputSchema"]["properties"]
 

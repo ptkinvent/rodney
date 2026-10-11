@@ -48,15 +48,39 @@ class Tool:
 _NAME = {"type": "string", "description": "App slug: lowercase letters, numbers, dashes (e.g. team-standup)."}
 _PATH = {"type": "string", "description": "File path inside the app, e.g. index.html or css/style.css."}
 
+_DATA_API = (
+    "FULL-STACK DATA API. A full-stack app calls these with same-origin fetch() from its own page, "
+    "sending Content-Type: application/json on every request:\n"
+    "  GET    /api/full-stack/<app>/data/<collection>                -> {collection, records}\n"
+    "  POST   /api/full-stack/<app>/data/<collection>  {data:{...}}  -> 201 {collection, record, records}\n"
+    "  PATCH  /api/full-stack/<app>/data/<collection>/<id>  {data:{...}} merges fields (add replace:true to "
+    "overwrite), or {increment:{field:n}} adds atomically (use for counters, tallies and votes) "
+    "-> {collection, record, records}\n"
+    "  DELETE /api/full-stack/<app>/data/<collection>/<id>           -> 204\n"
+    "A record is {id, data, createdAt, updatedAt}: the app's own fields live under record.data. Collections are "
+    "created by the first write. Limits: 1000 records and 4 MB per collection, 20 KB per record, 10 collections "
+    "per app. Data modelling: shared singleton state (one counter, one setting) is ONE record created once and "
+    "then updated in place (increment for numbers); create a record per item only for real lists and logs. "
+    "ANYONE WHO HAS THE APP'S LINK CAN READ AND CHANGE ITS DATA: tell the user this after deploying, and never "
+    "put secrets or personal information in it."
+)
+
 TOOLS = [
     Tool(
         "create-app",
         "Deploy a NEW static HTML micro-app at <base>/<name>/. Provide `html` (single-file app) or "
         "`files` (multi-file; must include index.html). Text files only. Returns the live URL and the "
-        "admin URL (a static page showing the app's name and author) — always show both to the user.",
+        "admin URL (a static page showing the app's name and author) — always show both to the user. "
+        "Set fullStack: true ONLY when the user asks for a \"full stack\" app or clearly wants data that persists "
+        "or is shared between visitors (data that only needs to stay in one person's browser should use "
+        "localStorage instead). A full-stack app gets a data API. " + _DATA_API,
         {
             "name": _NAME,
             "description": {"type": "string"},
+            "fullStack": {"type": "boolean", "description": "Give the app a shared, persistent data API. Default false."},
+            "template": {"type": "string", "enum": ["crud"], "description": "Full-stack only. Only crud is supported."},
+            "collectionName": {"type": "string", "description": "Full-stack only: the primary collection, e.g. tasks. Default records."},
+            "primaryField": {"type": "string", "description": "Full-stack only: the main display field, e.g. title. Default value."},
             "html": {"type": "string", "description": "Complete HTML for index.html."},
             "files": {
                 "type": "array",
@@ -69,11 +93,15 @@ TOOLS = [
             },
         },
         ["name"],
-        lambda apps, who, a: apps.create_app(who, a.get("name"), a.get("description"), a.get("html"), a.get("files")),
+        lambda apps, who, a: apps.create_app(
+            who, a.get("name"), a.get("description"), a.get("html"), a.get("files"),
+            a.get("fullStack"), a.get("template"), a.get("collectionName"), a.get("primaryField"),
+        ),
     ),
     Tool(
         "get-app",
-        "Get an app's metadata and file listing (not contents; use read-file for that).",
+        "Get an app's metadata (including appType: static or full-stack) and file listing, not contents; "
+        "use read-file for that. For a full-stack app it also gives the data API path and per-collection usage.",
         {"name": _NAME},
         ["name"],
         lambda apps, who, a: apps.get_app(a.get("name")),
@@ -101,11 +129,44 @@ TOOLS = [
         lambda apps, who, a: apps.delete_app(who, a.get("name")),
     ),
     Tool(
-        "list-apps",
-        "List all apps with their authors and URLs.",
+        "list-my-apps",
+        "List the apps you created, with their URLs and whether each is static or full-stack.",
         {},
         [],
-        lambda apps, who, a: apps.list_apps(),
+        lambda apps, who, a: apps.list_apps_by(who),
+    ),
+    Tool(
+        "update-app-settings",
+        "Change settings of an app you authored. Pass fullStack: true to give an existing app a backend "
+        "(then update its files to use the data API below), or false to switch the backend off; switching off "
+        "keeps the stored data and switching on again brings it back. Can also change the default collectionName "
+        "or primaryField. " + _DATA_API,
+        {
+            "name": _NAME,
+            "fullStack": {"type": "boolean"},
+            "collectionName": {"type": "string"},
+            "primaryField": {"type": "string"},
+        },
+        ["name"],
+        lambda apps, who, a: apps.set_settings(
+            who, a.get("name"), a.get("fullStack"), a.get("collectionName"), a.get("primaryField")
+        ),
+    ),
+    Tool(
+        "read-app-data",
+        "Look at the data stored by a full-stack app you authored. Without `collection`, lists its collections "
+        "with record counts and sizes; with `collection`, returns up to 50 of its records.",
+        {"name": _NAME, "collection": {"type": "string"}},
+        ["name"],
+        lambda apps, who, a: apps.read_data(who, a.get("name"), a.get("collection")),
+    ),
+    Tool(
+        "clear-app-data",
+        "PERMANENTLY erase data stored by a full-stack app you authored: one `collection`, or all of it if "
+        "`collection` is omitted. Cannot be undone. Confirm with the user first.",
+        {"name": _NAME, "collection": {"type": "string"}},
+        ["name"],
+        lambda apps, who, a: apps.clear_data(who, a.get("name"), a.get("collection")),
     ),
 ]
 _TOOLS_BY_NAME = {t.name: t for t in TOOLS}

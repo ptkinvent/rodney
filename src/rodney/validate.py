@@ -42,6 +42,24 @@ def validate_slug(slug: object) -> str:
     return slug
 
 
+COLLECTION_RE = re.compile(r"[a-z][a-z0-9_-]{0,31}")
+FIELD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+
+
+def validate_collection(name: object) -> str:
+    if not isinstance(name, str) or not COLLECTION_RE.fullmatch(name):
+        raise RodneyError(
+            "Collection names are lowercase letters, digits, - and _, starting with a letter (max 32 characters)."
+        )
+    return name
+
+
+def validate_field(name: object) -> str:
+    if not isinstance(name, str) or not FIELD_RE.fullmatch(name):
+        raise RodneyError("Field names are letters, digits and _, starting with a letter or _ (max 64 characters).")
+    return name
+
+
 def validate_file_path(path: object) -> str:
     """Validates a path inside an app, e.g. `index.html` or `css/style.css`."""
     if not isinstance(path, str) or not 0 < len(path) <= 200:

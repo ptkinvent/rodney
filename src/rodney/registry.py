@@ -14,6 +14,9 @@ import boto3
 
 AUTHOR_INDEX = "by-author"
 
+# Optional settings on an app's record. An app with no `appType` is a plain static app.
+SETTINGS = ("appType", "collectionName", "primaryField", "template")
+
 
 class AppRegistry(Protocol):
     def create(self, meta: dict) -> bool:
@@ -23,10 +26,19 @@ class AppRegistry(Protocol):
     def get(self, slug: str) -> dict | None: ...
     def touch(self, slug: str, updated_at: str) -> None: ...
     def set_author(self, slug: str, author: str, updated_at: str) -> None: ...
+    def set_fields(self, slug: str, fields: dict, updated_at: str) -> None:
+        """Changes some of SETTINGS on an existing app. Other keys are refused."""
+        ...
     def delete(self, slug: str) -> None: ...
     def list_all(self) -> list[dict]: ...
     def list_by_author(self, author: str) -> list[dict]: ...
     def count_by_author(self, author: str) -> int: ...
+
+
+def _check_settings(fields: dict) -> None:
+    unknown = set(fields) - set(SETTINGS)
+    if unknown:
+        raise ValueError(f"not an app setting: {sorted(unknown)}")
 
 
 class MemoryRegistry:
@@ -50,6 +62,11 @@ class MemoryRegistry:
     def set_author(self, slug, author, updated_at):
         if slug in self.apps:
             self.apps[slug].update(author=author, updatedAt=updated_at)
+
+    def set_fields(self, slug, fields, updated_at):
+        _check_settings(fields)
+        if slug in self.apps:
+            self.apps[slug].update(fields, updatedAt=updated_at)
 
     def delete(self, slug):
         self.apps.pop(slug, None)
@@ -77,6 +94,9 @@ class DynamoRegistry:
                 "createdAt": {"S": meta["createdAt"]}, "updatedAt": {"S": meta["updatedAt"]}}
         if meta.get("description"):
             item["description"] = {"S": meta["description"]}
+        for key in SETTINGS:
+            if meta.get(key):
+                item[key] = {"S": meta[key]}
         return item
 
     @staticmethod
@@ -85,6 +105,9 @@ class DynamoRegistry:
                 "createdAt": item["createdAt"]["S"], "updatedAt": item["updatedAt"]["S"]}
         if "description" in item:
             meta["description"] = item["description"]["S"]
+        for key in SETTINGS:
+            if key in item:
+                meta[key] = item[key]["S"]
         return meta
 
     def create(self, meta):
@@ -122,6 +145,16 @@ class DynamoRegistry:
             slug, "SET #a = :a, #u = :t", {"#a": "author", "#u": "updatedAt"},
             {":a": {"S": author}, ":t": {"S": updated_at}},
         )
+
+    def set_fields(self, slug, fields, updated_at):
+        _check_settings(fields)
+        names = {"#u": "updatedAt"}
+        values = {":t": {"S": updated_at}}
+        sets = ["#u = :t"]
+        for i, (key, value) in enumerate(fields.items()):
+            names[f"#k{i}"], values[f":v{i}"] = key, {"S": value}
+            sets.append(f"#k{i} = :v{i}")
+        self._update(slug, "SET " + ", ".join(sets), names, values)
 
     def delete(self, slug):
         self.ddb.delete_item(TableName=self.table, Key={"slug": {"S": slug}})

@@ -7,7 +7,9 @@ import pytest
 import rodney.handler as handler_module
 from rodney import google
 from rodney.apps import Apps
+from rodney.dataapi import DataApi
 from rodney.auth import author_id
+from rodney.datastore import MemoryDataStore
 from rodney.authstore import MemoryAuthStore
 from rodney.handler import Request, route, to_request
 from rodney.oauth import OAuthConfig, OAuthServer
@@ -25,7 +27,7 @@ class Env:
     def __init__(self):
         self.now = 1_000_000.0
         self.registry = MemoryRegistry()
-        self.apps = Apps(MemoryStore(), self.registry, "https://example.com")
+        self.apps = Apps(MemoryStore(), self.registry, MemoryDataStore(), "https://example.com")
         self.config = OAuthConfig("https://mcp.example.com", "gid", "gsecret", KEY)
         self.oauth = OAuthServer(self.config, MemoryAuthStore(lambda: self.now), clock=lambda: self.now)
         self.logins = {"g-me": ("me@example.com", "sub-me"), "g-friend": ("friend@example.com", "sub-friend")}
@@ -253,7 +255,8 @@ def test_surface_comes_only_from_the_cloudfront_header():
 
 def test_lambda_handler_wires_everything_together(env, monkeypatch):
     """The real entry point, with a real-shaped event: catches argument-order bugs in handler()."""
-    monkeypatch.setattr(handler_module, "_state", (env.apps, env.oauth, env.web))
+    data = DataApi(env.registry, env.apps.data, lambda: "2026-01-01T00:00:00.000Z")
+    monkeypatch.setattr(handler_module, "_state", (env.apps, env.oauth, env.web, data))
     event = {"requestContext": {"http": {"method": "GET"}}, "rawPath": "/", "rawQueryString": "", "headers": {"x-rodney-surface": "app"}}
     res = handler_module.handler(event, None)
     assert res["statusCode"] == 200 and "Sign in with Google" in res["body"]

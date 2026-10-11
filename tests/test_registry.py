@@ -134,3 +134,27 @@ def test_list_by_author_returns_only_that_authors_apps_across_pages(reg):
     assert [m["name"] for m in mine] == [f"mine-{i}" for i in range(5)]
     assert mine[2]["description"] == "app 2" and all(m["author"] == "u-me" for m in mine)
     assert reg.list_by_author("u-nobody") == []
+
+
+def test_settings_roundtrip_and_stay_absent_when_unset(reg):
+    reg.create(meta("plain"))
+    reg.create(meta("full", appType="full-stack", collectionName="tasks", primaryField="title", template="crud"))
+    assert "appType" not in reg.get("plain")  # legacy records are untouched
+    got = reg.get("full")
+    assert (got["appType"], got["collectionName"], got["primaryField"], got["template"]) == ("full-stack", "tasks", "title", "crud")
+    assert [m["appType"] for m in reg.list_by_author("u-a") if m["name"] == "full"] == ["full-stack"]
+
+
+def test_set_fields_updates_settings_and_refuses_everything_else(reg):
+    reg.create(meta("todo"))
+    reg.set_fields("todo", {"appType": "full-stack", "collectionName": "tasks"}, "2026-05-05T00:00:00.000Z")
+    got = reg.get("todo")
+    assert got["appType"] == "full-stack" and got["collectionName"] == "tasks" and got["updatedAt"] == "2026-05-05T00:00:00.000Z"
+    reg.set_fields("todo", {"appType": "static"}, "2026-06-06T00:00:00.000Z")
+    assert reg.get("todo")["appType"] == "static" and reg.get("todo")["collectionName"] == "tasks"
+    for forbidden in ({"author": "u-evil"}, {"slug": "x"}, {"createdAt": "x"}, {"appType": "full-stack", "author": "u-evil"}):
+        with pytest.raises(ValueError):
+            reg.set_fields("todo", forbidden, "2026-07-07T00:00:00.000Z")
+    assert reg.get("todo")["author"] == "u-a"
+    reg.set_fields("ghost", {"appType": "full-stack"}, "2026-07-07T00:00:00.000Z")  # never resurrects a deleted app
+    assert reg.get("ghost") is None
