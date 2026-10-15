@@ -141,20 +141,9 @@ def test_read_data_also_caps_by_size(parts):
 
 
 def test_data_tools_are_owner_only(loaded):
-    for call in (lambda: loaded.read_data("u-other", "todo"), lambda: loaded.clear_data("u-other", "todo"),
-                 lambda: loaded.clear_data("u-other", "todo", "tasks")):
-        with pytest.raises(RodneyError, match="only they can"):
-            call()
+    with pytest.raises(RodneyError, match="only they can"):
+        loaded.read_data("u-other", "todo")
     assert loaded.read_data("u-me", "todo", "tasks")["total"] == 60
-
-
-def test_clear_data_erases_one_collection_or_everything(loaded):
-    assert loaded.clear_data("u-me", "todo", "notes")["recordsErased"] == 1
-    assert [c["name"] for c in loaded.read_data("u-me", "todo")["collections"]] == ["tasks"]
-    assert loaded.clear_data("u-me", "todo")["recordsErased"] == 60
-    assert loaded.read_data("u-me", "todo")["collections"] == []
-    with pytest.raises(RodneyError):
-        loaded.clear_data("u-me", "todo", "Bad Name")
 
 
 def test_deleting_an_app_deletes_its_data_and_only_its_data(parts):
@@ -189,7 +178,7 @@ def test_tool_definitions_describe_the_data_api_and_its_public_nature():
         assert "ANYONE WHO HAS THE APP'S LINK CAN READ AND CHANGE ITS DATA" in text
         assert "1000 records and 4 MB" in text and "20 KB" in text
     assert "user asks for a \"full stack\" app" in create.description
-    assert "PERMANENTLY" in tools["clear-app-data"].description
+    assert "clear-app-data" not in tools  # erasing data by accident is too easy; delete-app is the only way
 
 
 def test_creating_a_full_stack_app_through_the_tool(apps):
@@ -207,7 +196,6 @@ def test_the_other_tools_end_to_end(apps):
     assert not err and json.loads(text)["meta"]["appType"] == "full-stack"
     assert call(apps, "update-app-settings", name="todo")[0] is True  # nothing to change
     assert json.loads(call(apps, "read-app-data", name="todo")[1]) == {"collections": []}
-    assert json.loads(call(apps, "clear-app-data", name="todo")[1])["recordsErased"] == 0
     err, text = call(apps, "update-app-settings", author="u-intruder", name="todo", fullStack=False)
     assert err and "only they can" in text
     call(apps, "create-app", author="u-friend", name="friends", html="x")
@@ -252,3 +240,18 @@ def test_entrance_comes_only_from_the_header_cloudfront_sets():
 def test_a_visitor_cannot_use_the_data_api_to_reach_the_wrong_app_or_the_auth_table(system):
     for path in ("/api/full-stack/todo/data/__collections", "/api/full-stack/todo%23x/data/tasks", "/api/full-stack/_meta/data/tasks"):
         assert system("data", "GET", path)["statusCode"] in (400, 404)
+
+
+def test_direct_upload_through_the_tools(apps):
+    store = apps.store
+    err, text = call(apps, "get-upload-url", name="up", path="index.html", size=2)
+    assert not err
+    r = json.loads(text)
+    assert store.upload(r["uploadUrl"], b"hi", r["contentType"])
+    err, text = call(apps, "finalize-upload", name="up", paths=["index.html"], description="uploaded")
+    out = json.loads(text)
+    assert not err and out["live"].endswith("/up") and out["meta"]["description"] == "uploaded"
+    err, text = call(apps, "update-app-settings", name="up", fullStack=True)  # a backend can be added afterwards
+    assert not err and json.loads(text)["dataApi"] == "/api/full-stack/up/data/records"
+    err, text = call(apps, "get-upload-url", name="up", path="index.html", size=2)
+    assert err and "already exists" in text

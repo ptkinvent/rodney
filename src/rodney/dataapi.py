@@ -12,6 +12,8 @@ A record is {id, data, createdAt, updatedAt}; the app's own fields live under `d
 Anyone who can open an app can read and write its data: the data is exactly as public as the app.
 What keeps that safe is the limits (see datastore.py), the per-app opt-in (`appType: full-stack`),
 and refusing browser requests that come from other websites.
+
+POST, PATCH and DELETE must send `Content-Type: application/json` (else 415), as the original Spin requires.
 """
 
 import json
@@ -164,6 +166,8 @@ class DataApi:
         if method not in allowed:
             return _reply(405, {"error": "method_not_allowed", "message": f"Use {' or '.join(allowed)} here."}, {"allow": ", ".join(allowed)})
         self._same_origin_only(method, headers)
+        if method in ("POST", "PATCH", "DELETE"):
+            self._json_only(headers)
 
         meta = self.registry.get(slug)
         if meta is None:
@@ -205,6 +209,16 @@ class DataApi:
 
     def _result(self, slug: str, collection: str, record: dict, status: int) -> dict:
         return _reply(status, {"collection": collection, "record": record, "records": self.store.list(slug, collection)})
+
+    @staticmethod
+    def _json_only(headers: dict) -> None:
+        """Backs up _same_origin_only in browsers too old to send Sec-Fetch-Site: another website can
+        POST text/plain or form bodies without asking first, but sending application/json makes the
+        browser ask (a CORS preflight), and we never say yes. PATCH and DELETE always get a preflight anyway;
+        they're checked too to match the original Spin, which rejects them with 415."""
+        media_type = headers.get("content-type", "").split(";")[0].strip().lower()
+        if media_type != "application/json":
+            raise ApiError(415, "unsupported_media_type", "Send the header Content-Type: application/json (on DELETE too).")
 
     @staticmethod
     def _same_origin_only(method: str, headers: dict) -> None:

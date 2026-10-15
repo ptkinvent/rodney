@@ -23,9 +23,11 @@ class Env:
         self.api = DataApi(self.registry, data, lambda: NOW)
         self.apps.create_app("u-me", "todo", html="x", full_stack=True, collection_name="tasks")
 
-    def call(self, method, path=BASE, body=None, headers=None, raw=None):
+    def call(self, method, path=BASE, body=None, headers=None, raw=None, content_type="application/json"):
+        """Sends Content-Type like a well-behaved app does; content_type=None leaves it out."""
         payload = raw if raw is not None else (json.dumps(body) if body is not None else "")
-        res = self.api.handle(method, path, headers or {}, payload)
+        headers = {**({"content-type": content_type} if content_type else {}), **(headers or {})}
+        res = self.api.handle(method, path, headers, payload)
         return res, (json.loads(res["body"]) if res["body"] else None)
 
     def add(self, **data):
@@ -212,10 +214,22 @@ def test_unknown_record_ids(env):
     assert env.call("DELETE", ghost)[0]["statusCode"] == 204  # deleting twice is harmless
 
 
-def test_content_type_is_not_required_and_is_ignored(env):
-    assert env.call("POST", body={"data": {"a": 1}}, headers={"content-type": "text/plain"})[0]["statusCode"] == 201
+@pytest.mark.parametrize("content_type", [None, "text/plain", "application/x-www-form-urlencoded", "multipart/form-data", "application/jsonx"])
+def test_writes_without_a_json_content_type_are_refused(env, content_type):
+    rec = env.add(n=1)
+    for method, path, body in (("POST", BASE, {"data": {"a": 1}}), ("PATCH", f"{BASE}/{rec['id']}", {"data": {"n": 2}}),
+                               ("PATCH", f"{BASE}/{rec['id']}", {"increment": {"n": 1}}), ("DELETE", f"{BASE}/{rec['id']}", None)):
+        res, out = env.call(method, path, body, content_type=content_type)
+        assert res["statusCode"] == 415 and out["error"] == "unsupported_media_type", method
+    assert [r["data"] for r in env.call("GET")[1]["records"]] == [{"n": 1}]  # refused writes wrote nothing
+
+
+def test_json_content_type_is_matched_loosely_and_reads_need_none(env):
+    for content_type in ("application/json; charset=utf-8", "Application/JSON"):
+        assert env.call("POST", body={"data": {"a": 1}}, content_type=content_type)[0]["statusCode"] == 201
+    assert env.call("GET", content_type=None)[0]["statusCode"] == 200
     rid = env.call("GET")[1]["records"][0]["id"]
-    assert env.call("DELETE", f"{BASE}/{rid}", headers={})[0]["statusCode"] == 204  # the original returned 415 here
+    assert env.call("DELETE", f"{BASE}/{rid}", content_type="application/json")[0]["statusCode"] == 204
 
 
 # ---- which apps have a backend ---------------------------------------------------------------

@@ -48,7 +48,7 @@ def test_tools_list_has_schemas_and_no_password(post):
     _, body = post({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     tools = {t["name"]: t for t in body["result"]["tools"]}
     assert set(tools) == {"create-app", "get-app", "read-file", "create-or-update-file", "delete-app", "list-my-apps",
-                          "update-app-settings", "read-app-data", "clear-app-data"}
+                          "update-app-settings", "read-app-data", "get-upload-url", "finalize-upload"}
     for t in tools.values():
         assert t["inputSchema"]["type"] == "object" and "password" not in t["inputSchema"]["properties"]
 
@@ -64,7 +64,7 @@ def test_batch(post):
 
 def test_author_comes_from_the_token_not_the_arguments(post, registry):
     _, body = call_tool(post, "create-app", author="friend", name="http-app", html="<p>hi</p>")
-    assert "https://example.com/http-app/" in body["result"]["content"][0]["text"]
+    assert "https://example.com/http-app" in body["result"]["content"][0]["text"]
     assert registry.get("http-app")["author"] == "friend"
     # a smuggled-in author argument changes nothing
     call_tool(post, "create-app", author="me", name="other", html="x", author_name="friend", password="x")

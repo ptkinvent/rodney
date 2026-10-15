@@ -50,7 +50,7 @@ _PATH = {"type": "string", "description": "File path inside the app, e.g. index.
 
 _DATA_API = (
     "FULL-STACK DATA API. A full-stack app calls these with same-origin fetch() from its own page, "
-    "sending Content-Type: application/json on every request:\n"
+    "sending the header Content-Type: application/json on every POST, PATCH and DELETE (without it they fail with 415):\n"
     "  GET    /api/full-stack/<app>/data/<collection>                -> {collection, records}\n"
     "  POST   /api/full-stack/<app>/data/<collection>  {data:{...}}  -> 201 {collection, record, records}\n"
     "  PATCH  /api/full-stack/<app>/data/<collection>/<id>  {data:{...}} merges fields (add replace:true to "
@@ -69,7 +69,7 @@ TOOLS = [
     Tool(
         "create-app",
         "Deploy a NEW static HTML micro-app at <base>/<name>/. Provide `html` (single-file app) or "
-        "`files` (multi-file; must include index.html). Text files only. Returns the live URL and the "
+        "`files` (multi-file; must include index.html). Text files only (for binary files see get-upload-url). Returns the live URL and the "
         "admin URL (a static page showing the app's name and author) — always show both to the user. "
         "Set fullStack: true ONLY when the user asks for a \"full stack\" app or clearly wants data that persists "
         "or is shared between visitors (data that only needs to stay in one person's browser should use "
@@ -136,6 +136,35 @@ TOOLS = [
         lambda apps, who, a: apps.list_apps_by(who),
     ),
     Tool(
+        "get-upload-url",
+        "Direct upload, step 1 of 2. Use this ONLY when the user hands you finished files and asks to deploy them "
+        "unchanged (\"spin this up\", \"deploy this\"), and only if you can make HTTP requests yourself (e.g. with "
+        "code execution); otherwise use create-app. It is the only way to deploy binary files (images, fonts) or "
+        "files over 4 MB (up to 25 MB each). Call once per file, then PUT the file's exact bytes to `uploadUrl` with "
+        "the header Content-Type set to the returned `contentType` (the size and type are signed: anything else is "
+        "refused). URLs expire after 15 minutes. Then call finalize-upload. Uploads create NEW apps only.",
+        {
+            "name": _NAME,
+            "path": _PATH,
+            "size": {"type": "integer", "description": "The file's exact size in bytes."},
+        },
+        ["name", "path", "size"],
+        lambda apps, who, a: apps.get_upload_url(who, a.get("name"), a.get("path"), a.get("size")),
+    ),
+    Tool(
+        "finalize-upload",
+        "Direct upload, step 2 of 2: after every file is PUT, publish the app. `paths` lists every uploaded file "
+        "and must include index.html. Returns the live URL and the admin URL; always show both to the user. "
+        "Static apps only: for a backend, call update-app-settings with fullStack: true afterwards.",
+        {
+            "name": _NAME,
+            "paths": {"type": "array", "items": {"type": "string"}, "description": "Every uploaded file path."},
+            "description": {"type": "string"},
+        },
+        ["name", "paths"],
+        lambda apps, who, a: apps.finalize_upload(who, a.get("name"), a.get("paths"), a.get("description")),
+    ),
+    Tool(
         "update-app-settings",
         "Change settings of an app you authored. Pass fullStack: true to give an existing app a backend "
         "(then update its files to use the data API below), or false to switch the backend off; switching off "
@@ -159,14 +188,6 @@ TOOLS = [
         {"name": _NAME, "collection": {"type": "string"}},
         ["name"],
         lambda apps, who, a: apps.read_data(who, a.get("name"), a.get("collection")),
-    ),
-    Tool(
-        "clear-app-data",
-        "PERMANENTLY erase data stored by a full-stack app you authored: one `collection`, or all of it if "
-        "`collection` is omitted. Cannot be undone. Confirm with the user first.",
-        {"name": _NAME, "collection": {"type": "string"}},
-        ["name"],
-        lambda apps, who, a: apps.clear_data(who, a.get("name"), a.get("collection")),
     ),
 ]
 _TOOLS_BY_NAME = {t.name: t for t in TOOLS}

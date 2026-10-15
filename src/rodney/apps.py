@@ -1,5 +1,6 @@
 """All Rodney operations. Writes take the signed-in author; reads are open to any signed-in user."""
 
+import hashlib
 import logging
 from datetime import datetime, timezone
 
@@ -8,6 +9,7 @@ from .datastore import DataStore
 from .registry import AppRegistry
 from .store import Store
 from .validate import (
+    MAX_UPLOAD_BYTES,
     RodneyError,
     content_type_for,
     validate_collection,
@@ -28,6 +30,11 @@ PUBLIC_DATA_NOTICE = (
 )
 READ_DATA_MAX_RECORDS = 50
 READ_DATA_MAX_CHARS = 100_000
+UPLOAD_URL_TTL = 15 * 60  # seconds a presigned upload URL stays valid
+MAX_UPLOAD_FILES = 200  # per app
+# Staged uploads live under `_uploads/`, which CloudFront never serves and a lifecycle rule
+# empties after a day (infra/stack.py). Nothing there is public until finalize-upload copies it.
+UPLOAD_PREFIX = "_uploads"
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
@@ -41,7 +48,9 @@ class Apps:
         self.base_url = base_url
 
     def urls(self, slug: str) -> dict:
-        return {"live": f"{self.base_url}/{slug}/", "admin": f"{self.base_url}/{slug}/admin/"}
+        # No trailing slash, like the original Spin's links. CloudFront redirects them to the slashed
+        # form (infra/stack.py), which relative links inside the app need.
+        return {"live": f"{self.base_url}/{slug}", "admin": f"{self.base_url}/{slug}/admin"}
 
     def _data_info(self, slug: str, meta: dict) -> dict:
         """What a full-stack app needs to know to use its backend (empty for static apps)."""
@@ -129,10 +138,73 @@ class Apps:
         slug = validate_slug(name)
         path = validate_file_path(path)
         self._load_meta(slug)
-        content = self.store.get(f"{slug}/{path}")
+        try:
+            content = self.store.get(f"{slug}/{path}")
+        except UnicodeDecodeError:
+            raise RodneyError(f"{path} is a binary file, so it can't be shown as text.") from None
         if content is None:
             raise RodneyError(f'No file "{path}" in "{slug}".')
         return content
+
+    def _staging(self, author: str, slug: str) -> str:
+        """Where one author's uploads for one app wait. Keyed by author, so finalizing only ever
+        sees the caller's own uploads. Hashed, so the key never depends on the handle's characters."""
+        return f"{UPLOAD_PREFIX}/{hashlib.sha256(author.encode('utf-8')).hexdigest()[:16]}/{slug}/"
+
+    def get_upload_url(self, author: str, name, path, size) -> dict:
+        """Step 1 of a direct upload: a short-lived URL to PUT one file of a NEW app straight to S3."""
+        slug = validate_slug(name)
+        path = validate_file_path(path)
+        if not isinstance(size, int) or isinstance(size, bool) or not 0 <= size <= MAX_UPLOAD_BYTES:
+            raise RodneyError(f"`size` must be the file's size in bytes, at most {MAX_UPLOAD_BYTES // 1024 // 1024} MB.")
+        # Checked before signing: once a URL exists, whoever holds it can write.
+        if self.registry.get(slug) is not None:
+            raise RodneyError(f'An app named "{slug}" already exists. Uploads create new apps; pick another name.')
+        if self.registry.count_by_author(author) >= MAX_APPS_PER_AUTHOR:
+            raise RodneyError(f"You already have {MAX_APPS_PER_AUTHOR} apps. Delete one before creating another.")
+        staging = self._staging(author, slug)
+        staged = self.store.list(staging)
+        if len(staged) >= MAX_UPLOAD_FILES and f"{staging}{path}" not in staged:
+            raise RodneyError(f"An app can have at most {MAX_UPLOAD_FILES} uploaded files.")
+        content_type = content_type_for(path)
+        url = self.store.presign_put(f"{staging}{path}", content_type, size, UPLOAD_URL_TTL)
+        log.info("audit get-upload-url author=%s app=%s path=%s size=%d", author, slug, path, size)
+        return {"uploadUrl": url, "contentType": content_type, "expiresIn": UPLOAD_URL_TTL}
+
+    def finalize_upload(self, author: str, name, paths, description=None) -> dict:
+        """Step 2 of a direct upload: check what arrived, claim the name, and publish the files."""
+        slug = validate_slug(name)
+        if not isinstance(paths, list) or not paths:
+            raise RodneyError("`paths` must be the list of uploaded file paths.")
+        paths = [validate_file_path(p) for p in paths]
+        if len(set(paths)) != len(paths):
+            raise RodneyError("Duplicate file paths.")
+        if "index.html" not in paths:
+            raise RodneyError("An app needs an index.html.")
+        staging = self._staging(author, slug)
+        sizes = self.store.sizes(staging)
+        missing = [p for p in paths if f"{staging}{p}" not in sizes]
+        if missing:
+            raise RodneyError(f"Not uploaded (or the upload expired): {', '.join(missing)}. Get a new URL and upload again.")
+        too_big = [p for p in paths if sizes[f"{staging}{p}"] > MAX_UPLOAD_BYTES]  # S3 enforces this too; belt and braces
+        if too_big:
+            raise RodneyError(f"Larger than {MAX_UPLOAD_BYTES // 1024 // 1024} MB: {', '.join(too_big)}.")
+        if self.registry.count_by_author(author) >= MAX_APPS_PER_AUTHOR:
+            raise RodneyError(f"You already have {MAX_APPS_PER_AUTHOR} apps. Delete one before creating another.")
+
+        now = _now()
+        meta = {"name": slug, "author": author, "createdAt": now, "updatedAt": now}
+        if description:
+            meta["description"] = description
+        if not self.registry.create(meta):
+            raise RodneyError(f'An app named "{slug}" already exists. Pick another name.')
+
+        for path in paths:
+            self.store.copy(f"{staging}{path}", f"{slug}/{path}", content_type_for(path))
+        self.store.put(f"{slug}/admin/index.html", render_admin_page(slug, author), content_type_for("x.html"))
+        self.store.delete_many(list(sizes))  # including anything uploaded but not listed
+        log.info("audit finalize-upload author=%s app=%s files=%d", author, slug, len(paths))
+        return {"meta": meta, **self.urls(slug)}
 
     def write_file(self, author: str, name, path, content) -> dict:
         slug, meta = self._load_owned(author, name)
@@ -193,16 +265,6 @@ class Apps:
                 break
             shown.append(record)
         return {"collection": collection, "total": len(records), "shown": len(shown), "records": shown}
-
-    def clear_data(self, author: str, name, collection=None) -> dict:
-        """Owner-only and destructive: erase one collection, or all of an app's data."""
-        slug, _ = self._load_owned(author, name)
-        if collection is None:
-            erased = self.data.delete_app(slug)
-        else:
-            erased = self.data.clear(slug, validate_collection(collection))
-        log.info("audit clear-data author=%s app=%s collection=%s records=%d", author, slug, collection, erased)
-        return {"app": slug, "collection": collection, "recordsErased": erased}
 
     def reassign(self, name, new_author: str) -> dict:
         """Operator-only (not an MCP tool): hands an app to another author."""

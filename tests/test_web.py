@@ -77,7 +77,7 @@ def test_signed_in_user_sees_only_their_own_apps(env):
     assert "theirs" not in body and "not yours" not in body
     assert "2 apps" in body and "Signed in as <code>me@example.com</code>" in body and "Sign out" in body
     assert f"<code>{ME}</code>" not in body  # the email replaces the handle in the header
-    assert 'href="https://example.com/mine-a/"' in body and 'href="https://example.com/mine-a/admin/"' in body
+    assert 'href="https://example.com/mine-a"' in body and 'href="https://example.com/mine-a/admin"' in body
 
 
 def test_empty_state_and_singular_count(env):

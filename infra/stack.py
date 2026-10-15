@@ -56,6 +56,15 @@ class RodneyStack(Stack):
             encryption=s3.BucketEncryption.S3_MANAGED,
             enforce_ssl=True,
             removal_policy=RemovalPolicy.RETAIN,  # deleting the stack must not delete your apps
+            # Direct uploads wait under _uploads/ until finalize-upload publishes them. Anything
+            # left behind (abandoned or failed uploads) is deleted after a day.
+            lifecycle_rules=[
+                s3.LifecycleRule(
+                    prefix="_uploads/",
+                    expiration=Duration.days(1),
+                    abort_incomplete_multipart_upload_after=Duration.days(1),
+                )
+            ],
         )
 
         # The registry of apps: who owns what. Durable (kept if the stack is deleted, with

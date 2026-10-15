@@ -9,9 +9,9 @@ Static-HTML micro-apps at `<base>/<slug>/`, deployed by Claude through an MCP se
     src/rodney/tokens.py       signed tokens (HS256) and PKCE
     src/rodney/authstore.py    single-use codes and refresh tokens (DynamoDB)
     src/rodney/google.py       Google sign-in
-    src/rodney/apps.py         create / get / read / write / delete / list
+    src/rodney/apps.py         create / get / read / write / delete / list / direct uploads
     src/rodney/registry.py     the app registry (DynamoDB): which apps exist and who owns them
-    src/rodney/admin_page.py   the static /<slug>/admin/ page
+    src/rodney/admin_page.py   the static /<slug>/admin page
     src/rodney/mcp.py          MCP protocol (JSON-RPC) + tool definitions
     src/rodney/handler.py      AWS Lambda entry point and router
     infra/                   AWS CDK (Python): bucket, Lambda, CloudFront, Route 53, certificate
@@ -32,7 +32,17 @@ An app made with `fullStack: true` can store data. Its page calls `/api/full-sta
 `src/rodney/datastore.py` holds the records in the `AppData` table (record and quota counters change together
 in one transaction; `data` is a native map so `increment` is a true atomic update). **Data is public to anyone
 with the app's link** by design. Limits are constants in `datastore.py`. Owner tools: `update-app-settings`,
-`read-app-data`, `clear-app-data`. Deleting an app deletes its data; turning the backend off keeps it.
+`read-app-data`. There is deliberately no tool to erase data: deleting an app deletes its data; turning the
+backend off keeps it. POST, PATCH and DELETE must send `Content-Type: application/json` (else 415).
+
+## Direct uploads
+
+`get-upload-url` and `finalize-upload` deploy finished files (binary ones too, up to 25 MB each) without
+passing them through the Lambda. `get-upload-url` checks the name is free, then signs a 15-minute S3 PUT URL
+for `_uploads/<author hash>/<slug>/<path>` with the file's Content-Type and exact size, so S3 refuses
+anything else. `_uploads/` is never served (see below) and a lifecycle rule empties it after a day.
+`finalize-upload` reads only the caller's own staging prefix, claims the name, and copies the files into
+`<slug>/` server-side.
 
 ## Sign-in
 

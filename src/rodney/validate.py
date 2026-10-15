@@ -6,6 +6,7 @@ import re
 RESERVED_SLUGS = {"mcp", "admin", "assets", "api", "static", "privacy", "terms"}
 
 MAX_FILE_BYTES = 4 * 1024 * 1024  # Lambda's request limit is ~6MB, so stay under it.
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # direct uploads go to S3, not through the Lambda
 
 # 1-40 chars; lowercase letters, digits, dashes; can't start or end with a dash.
 _SLUG_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?")
@@ -23,6 +24,24 @@ _CONTENT_TYPES = {
     "md": "text/plain; charset=utf-8",
     "xml": "application/xml; charset=utf-8",
     "csv": "text/csv; charset=utf-8",
+    "map": "application/json; charset=utf-8",
+    # Binary types: only direct uploads can carry these (create-app takes text).
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "gif": "image/gif",
+    "webp": "image/webp",
+    "avif": "image/avif",
+    "ico": "image/x-icon",
+    "woff": "font/woff",
+    "woff2": "font/woff2",
+    "ttf": "font/ttf",
+    "otf": "font/otf",
+    "pdf": "application/pdf",
+    "wasm": "application/wasm",
+    "mp3": "audio/mpeg",
+    "mp4": "video/mp4",
+    "webm": "video/webm",
 }
 
 
